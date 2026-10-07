@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @data-pilot/contracts && npm run build -w @data-pilot/dql && npm run build -w @data-pilot/engine-stream && npm run build -w @data-pilot/core && npm run build -w @data-pilot/runtime-node && npm run compile -w data-pilot-vscode",
-    "typecheck": "npm run typecheck -w @data-pilot/contracts && npm run typecheck -w @data-pilot/dql && npm run typecheck -w @data-pilot/engine-stream && npm run typecheck -w @data-pilot/core && npm run typecheck -w @data-pilot/runtime-node && npm run typecheck -w data-pilot-vscode",
+    "typecheck": "tsc -b packages/contracts packages/dql packages/engine-stream packages/core packages/runtime-node && npm run typecheck -w data-pilot-vscode",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "spike:child-process": "npm run spike -w @data-pilot/runtime-node",

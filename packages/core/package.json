@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -b --pretty false",
     "test": "node --import tsx --test src/**/*.test.ts",
     "cli": "tsx src/cli.ts"
   },
