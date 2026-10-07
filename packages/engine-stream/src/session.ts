@@ -14,6 +14,12 @@ import {
 import { sampleCsv, iterateCsvRows } from "./csv.js";
 import { sampleJsonl, iterateJsonlRows } from "./jsonl.js";
 import { classifySample } from "./cell.js";
+import {
+  applyCellEdit,
+  previewCellEdit,
+  type CellEditTarget,
+  type EditPreview,
+} from "./fixture-edit.js";
 
 export type DatasetFormat = "csv" | "jsonl";
 
@@ -241,6 +247,39 @@ export class DatasetStore {
       severity: "error",
       message: `Row index ${rowIndex} is out of range for inspected prefix`,
     };
+  }
+
+  editTarget(datasetId: string, rowIndex: number, column: string): CellEditTarget {
+    const s = this.get(datasetId);
+    return {
+      filePath: s.handle.revision.path,
+      format: s.handle.format,
+      rowIndex,
+      column,
+      header: [...s.header],
+    };
+  }
+
+  async previewCellEdit(
+    datasetId: string,
+    rowIndex: number,
+    column: string,
+    newRaw: string,
+  ): Promise<EditPreview> {
+    const stale = await this.assertFresh(datasetId);
+    if (stale) throw stale;
+    return previewCellEdit(this.editTarget(datasetId, rowIndex, column), newRaw);
+  }
+
+  async applyCellEdit(
+    datasetId: string,
+    rowIndex: number,
+    column: string,
+    newRaw: string,
+  ): Promise<EditPreview> {
+    const stale = await this.assertFresh(datasetId);
+    if (stale) throw stale;
+    return applyCellEdit(this.editTarget(datasetId, rowIndex, column), newRaw);
   }
 
   close(datasetId: string): void {

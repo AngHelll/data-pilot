@@ -1,0 +1,65 @@
+:root {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+body { margin: 0; padding: 12px 16px 24px; }
+h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 4px; }
+.meta { opacity: 0.85; font-size: 0.9rem; margin-bottom: 12px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); font-size: 0.8rem; margin-right: 6px; }
+.warn { color: var(--vscode-editorWarning-foreground); }
+.err { color: var(--vscode-editorError-foreground); }
+section { margin-top: 16px; }
+label { display: block; font-weight: 600; margin-bottom: 6px; }
+label.saved-label { margin: 0; }
+textarea {
+  width: 100%; box-sizing: border-box; min-height: 56px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  font-family: var(--vscode-editor-font-family);
+  padding: 8px;
+}
+button {
+  margin-top: 8px; padding: 6px 14px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none; cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+.table-wrap { overflow: auto; max-height: 420px; border: 1px solid var(--vscode-panel-border); }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--vscode-editor-background); z-index: 1; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+ul.diag { margin: 0; padding-left: 1.2rem; }
+ul.diag li.clickable { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.schema-wrap { max-height: 200px; }
+.hint { font-size: 0.85rem; opacity: 0.85; margin: 4px 0 0; }
+textarea.dql-error { border-color: var(--vscode-inputValidation-errorBorder, #f14c4c); }
+textarea.dql-ok { border-color: var(--vscode-inputValidation-infoBorder, transparent); }
+.cost { font-size: 0.85rem; opacity: 0.9; margin-top: 6px; }
+td.cell { cursor: pointer; }
+td.cell:hover { background: var(--vscode-list-hoverBackground); }
+td.cell.selected { outline: 1px solid var(--vscode-focusBorder); }
+pre.diff {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.8rem;
+  overflow: auto;
+  max-height: 160px;
+  padding: 8px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-textCodeBlock-background);
+}
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Author display:flex otherwise overrides the HTML hidden attribute. */
+[hidden] { display: none !important; }
+input.cell-edit {
+  flex: 1; min-width: 120px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  padding: 4px 8px;
+}
+#inspect-detail { font-size: 0.9rem; margin-top: 4px; }

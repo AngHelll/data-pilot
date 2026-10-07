@@ -50,3 +50,7 @@ npm run query -- fixtures/sample/tiny.csv 'where country = "MX" | count'
 ```
 
 Plan y decisiones del Project viven en **Context** de Cursor (Agent Store), no en este repo.
+
+## Workflow local (agente)
+
+Como en BDD Pilot: el pipeline ForgeOne (gates, specs, ContextOps) vive en **`docs-internal/`** y **`.cursor/`**, ambos **gitignored**. No se publica ni se commitea. Después de clonar, esas carpetas solo existen en esta máquina (copiar de otro repo Pilot o regenerar). Docs públicos de producto/arquitectura siguen en `docs/`.

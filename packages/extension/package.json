@@ -14,7 +14,11 @@
     "Data Science"
   ],
   "activationEvents": [
-    "onCommand:dataPilot.openDataset"
+    "onCommand:dataPilot.openDataset",
+    "onCommand:dataPilot.openDatasetResource",
+    "onCommand:dataPilot.openDatasetCustomEditor",
+    "onView:dataPilot.explorer",
+    "onCustomEditor:dataPilot.dataset"
   ],
   "main": "./out/extension.js",
   "capabilities": {
@@ -34,9 +38,86 @@
     "commands": [
       {
         "command": "dataPilot.openDataset",
-        "title": "Data Pilot: Open Dataset"
+        "title": "Data Pilot: Open Dataset",
+        "icon": "$(table)"
+      },
+      {
+        "command": "dataPilot.openDatasetResource",
+        "title": "Open with Data Pilot",
+        "icon": "$(table)"
+      },
+      {
+        "command": "dataPilot.showLog",
+        "title": "Data Pilot: Show Log"
+      },
+      {
+        "command": "dataPilot.openDatasetCustomEditor",
+        "title": "Data Pilot: Open as Custom Editor",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "dataPilot.refreshExplorerPreview",
+        "title": "Data Pilot: Refresh Preview",
+        "icon": "$(refresh)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "dataPilot.explorer",
+          "name": "Data Pilot",
+          "when": "workspaceFolderCount != 0"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "dataPilot.dataset",
+        "displayName": "Data Pilot",
+        "selector": [
+          { "filenamePattern": "*.csv" },
+          { "filenamePattern": "*.jsonl" },
+          { "filenamePattern": "*.ndjson" }
+        ],
+        "priority": "option"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "dataPilot.openDatasetResource",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "dataPilot.openDatasetResource",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dataPilot.openDatasetCustomEditor",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dataPilot.refreshExplorerPreview",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
+          "group": "navigation@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dataPilot.refreshExplorerPreview",
+          "when": "view == dataPilot.explorer",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Data Pilot",
       "properties": {
@@ -62,8 +143,8 @@
     "compile": "node esbuild.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "watch": "node esbuild.mjs --watch",
-    "package": "npm run compile && mkdir -p ../../tmp && npx @vscode/vsce package --no-dependencies -o ../../tmp/data-pilot.vsix",
-    "test": "node -e \"console.log('extension tests covered by @data-pilot/core trust suite')\""
+    "package": "npm run compile && mkdir -p ../../tmp && npx @vscode/vsce package --no-dependencies --allow-missing-repository -o ../../tmp/data-pilot.vsix",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@data-pilot/contracts": "0.0.0",

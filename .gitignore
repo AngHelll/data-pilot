@@ -13,3 +13,9 @@ tmp/
 fixtures/generated/
 *.log
 .vscode-test/
+
+# Internal workflow (ForgeOne / agent pipeline — local only, like bdd-pilot)
+docs-internal/
+
+# Cursor agent config (local workflow)
+.cursor/

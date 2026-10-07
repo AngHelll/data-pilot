@@ -8,7 +8,10 @@ import {
   type Diagnostic,
   type EngineOp,
   type ExecuteQueryPayload,
+  type EditFixturePayload,
+  type ExportResultPayload,
   type InspectValuePayload,
+  type SaveQueryPayload,
   type IpcRequest,
   type IpcResponse,
   type OpenDatasetPayload,
@@ -16,7 +19,13 @@ import {
   type TrustMode,
   isUntrustedAllowed,
 } from "@data-pilot/contracts";
-import { DatasetService, QueryService, isDiagnostic } from "@data-pilot/core";
+import {
+  DatasetService,
+  EditService,
+  ExportService,
+  QueryService,
+  isDiagnostic,
+} from "@data-pilot/core";
 import { DatasetStore } from "@data-pilot/engine-stream";
 import { createInterface } from "node:readline";
 
@@ -26,6 +35,8 @@ const rssLimitMb = Number(process.env.DATA_PILOT_RSS_LIMIT_MB ?? "0");
 const store = new DatasetStore();
 const datasets = new DatasetService(store, trustMode);
 const queries = new QueryService(store, trustMode);
+const edits = new EditService(store, { trustMode });
+const exportsSvc = new ExportService(store, queries, { trustMode });
 
 const cancelled = new Set<string>();
 const inflight = new Map<string, AbortController>();
@@ -220,9 +231,70 @@ async function handle(req: IpcRequest): Promise<void> {
         ok(req.requestId, { closed: datasetId });
         return;
       }
-      case "exportResult":
-      case "editFixture":
-      case "saveQuery":
+      case "editFixture": {
+        const p = asRecord(req.payload) as unknown as EditFixturePayload;
+        if (!p.datasetId || typeof p.rowIndex !== "number" || !p.column) {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "editFixture requires datasetId, rowIndex, and column",
+          });
+          return;
+        }
+        const newRaw = typeof p.newRaw === "string" ? p.newRaw : "";
+        if (p.apply) {
+          const result = await edits.apply(p.datasetId, p.rowIndex, p.column, newRaw);
+          ok(req.requestId, result);
+          return;
+        }
+        const preview = await edits.preview(p.datasetId, p.rowIndex, p.column, newRaw);
+        ok(req.requestId, preview);
+        return;
+      }
+      case "saveQuery": {
+        const p = asRecord(req.payload) as unknown as SaveQueryPayload;
+        if (!p.datasetId || typeof p.dql !== "string") {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "saveQuery requires datasetId and dql",
+          });
+          return;
+        }
+        const saved = queries.saveQuery(p.datasetId, p.dql, p.params);
+        if (isDiagnostic(saved)) {
+          fail(req.requestId, saved);
+          return;
+        }
+        ok(req.requestId, saved);
+        return;
+      }
+      case "exportResult": {
+        const p = asRecord(req.payload) as unknown as ExportResultPayload;
+        if (!p.datasetId || typeof p.dql !== "string") {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "exportResult requires datasetId and dql",
+          });
+          return;
+        }
+        const artifact = await exportsSvc.exportQueryResult(
+          p.datasetId,
+          p.dql,
+          p.params,
+          {
+            ...(p.format !== undefined ? { format: p.format } : {}),
+            ...(p.budget !== undefined ? { budget: p.budget } : {}),
+          },
+        );
+        if (isDiagnostic(artifact)) {
+          fail(req.requestId, artifact);
+          return;
+        }
+        ok(req.requestId, artifact);
+        return;
+      }
       case "globalScan":
       case "agentQuery":
         fail(req.requestId, {

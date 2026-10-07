@@ -53,7 +53,8 @@ Definitions live in `@data-pilot/contracts`.
 
 - CSP + validated webview messages (Phase 3).  
 - Values rendered as text, never HTML.  
-- Paths authorized by the host.  
+- **Paths authorized by the host:** the engine child returns export **content** only (`ExportArtifact`); the extension host runs `showSaveDialog` and writes the file. Fixture apply returns the new file text; the host replaces the open file. The child does not write or rename dataset paths.  
+- **Saved queries:** validated DTO from core via IPC `saveQuery`; persistence is extension `workspaceState` only.  
 - Logs without row payloads/secrets.  
 - `untrustedWorkspaces.supported: "limited"` enforced in handlers ([adr/0004-untrusted-limited.md](./adr/0004-untrusted-limited.md)).
 
@@ -70,7 +71,7 @@ Definitions live in `@data-pilot/contracts`.
 | 0 | Foundation, ADRs, DQL spec, spikes (this doc set) |
 | 1 | CSV/JSONL ingest + preview |
 | 2 | DQL 0.1 parser + streaming engine |
-| 3 | VS Code workspace UI |
-| 4 | Safe fixture edit |
+| 3 | VS Code workspace UI (describe, DQL plan/run, save/export, inspect) |
+| 4 | Safe fixture edit (diff preview + explicit apply) |
 | 5 | v0.1 close / human eval |
 | 6+ | Analytics, expect/diff, CLI/agents |

@@ -70,6 +70,10 @@ export class ChildProcessHost {
       ...this.options.env,
       DATA_PILOT_TRUST_MODE: this.options.trustMode ?? "trusted",
     };
+    // Required when execPath is VS Code / Cursor Electron (not plain Node).
+    if (!this.options.execPath || this.options.execPath === process.execPath) {
+      env.ELECTRON_RUN_AS_NODE = "1";
+    }
     if (this.options.rssLimitMb && this.options.rssLimitMb > 0) {
       env.DATA_PILOT_RSS_LIMIT_MB = String(this.options.rssLimitMb);
     }
