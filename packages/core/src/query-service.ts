@@ -99,20 +99,44 @@ export class QueryService {
     );
   }
 
+  /** Validates DQL (parse + typecheck) before returning a portable SavedQuery DTO. */
+  saveQuery(
+    datasetId: string,
+    dql: string,
+    params?: Record<string, DataValue | string | number | boolean | null>,
+  ): SavedQuery | Diagnostic {
+    const blocked = assertOpAllowed(this.ctx(), "saveQuery");
+    if (blocked) return blocked;
+
+    const plan = this.plan(datasetId, dql, params);
+    const errors = plan.diagnostics.filter((d) => d.severity === "error");
+    if (!plan.query || errors.length > 0) {
+      return (
+        errors[0] ?? {
+          code: "invalid-query",
+          severity: "error",
+          message: "Query is not valid; fix DQL before saving",
+        }
+      );
+    }
+
+    const { handle } = this.store.describe(datasetId);
+    const normalized = normalizeParams(params);
+    return {
+      dqlVersion: "0.1",
+      dql: plan.formatted ?? dql.trim(),
+      ...(Object.keys(normalized).length > 0 ? { params: normalized } : {}),
+      schemaColumnNames: handle.columns.map((c) => c.name),
+      savedAtMs: Date.now(),
+    };
+  }
+
+  /** @deprecated Use saveQuery — kept for tests migrating gradually. */
   saveQueryDraft(
     dql: string,
     datasetId: string,
     params?: Record<string, DataValue>,
   ): SavedQuery | Diagnostic {
-    const blocked = assertOpAllowed(this.ctx(), "saveQuery");
-    if (blocked) return blocked;
-    const { handle } = this.store.describe(datasetId);
-    return {
-      dqlVersion: "0.1",
-      dql,
-      ...(params ? { params } : {}),
-      schemaColumnNames: handle.columns.map((c) => c.name),
-      savedAtMs: Date.now(),
-    };
+    return this.saveQuery(datasetId, dql, params);
   }
 }

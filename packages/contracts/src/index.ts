@@ -198,6 +198,28 @@ export const DEFAULT_PREVIEW_BUDGET: Required<
   maxBytes: 1024 * 1024,
 };
 
+/** Bounded export from a DQL result (honest scan — not unbounded). */
+export const DEFAULT_EXPORT_BUDGET: Required<
+  Pick<QueryBudget, "maxRows" | "maxBytes">
+> = {
+  maxRows: 10_000,
+  maxBytes: 10 * 1024 * 1024,
+};
+
+export type ExportFormat = "csv" | "jsonl" | "same-as-source";
+
+/** Engine returns content only; host chooses an authorized write path (security). */
+export interface ExportArtifact {
+  format: "csv" | "jsonl";
+  content: string;
+  byteLength: number;
+  rowCount: number;
+  /** Basename suggestion derived from the source dataset path. */
+  suggestedBasename: string;
+  completion: CompletionState;
+  diagnostics: Diagnostic[];
+}
+
 export interface OpenDatasetPayload {
   path: string;
   format?: "csv" | "jsonl" | "auto";
@@ -231,12 +253,36 @@ export interface InspectValuePayload {
   column: string;
 }
 
+export interface EditFixturePayload {
+  datasetId: string;
+  rowIndex: number;
+  column: string;
+  /** Raw cell text as entered by the user (not coerced). */
+  newRaw: string;
+  /** When true, writes the change after validation; default is diff-only preview. */
+  apply?: boolean;
+}
+
 export interface SavedQuery {
   dqlVersion: "0.1";
   dql: string;
   params?: Record<string, DataValue>;
   schemaColumnNames: string[];
   savedAtMs: number;
+}
+
+export interface SaveQueryPayload {
+  datasetId: string;
+  dql: string;
+  params?: Record<string, DataValue | string | number | boolean | null>;
+}
+
+export interface ExportResultPayload {
+  datasetId: string;
+  dql: string;
+  params?: Record<string, DataValue | string | number | boolean | null>;
+  budget?: QueryBudget;
+  format?: ExportFormat;
 }
 
 export * from "./values.js";

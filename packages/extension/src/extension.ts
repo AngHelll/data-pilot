@@ -1,82 +1,143 @@
 import * as vscode from "vscode";
+import { assertOpAllowed } from "@data-pilot/core";
+import {
+  DATA_PILOT_VIEW_TYPE,
+  DatasetCustomEditorProvider,
+} from "./dataset-custom-editor";
+import { ExtensionEngineHost, workspaceTrustMode } from "./engine-host";
+import { openDatasetUri } from "./open-dataset";
+import {
+  DATA_PILOT_EXPLORER_VIEW_ID,
+  DatasetExplorerWebviewProvider,
+} from "./dataset-explorer-view";
+import { dataPilotLog, logInfo } from "./log";
+import { SavedQueryStore } from "./saved-query-store";
+import { isDatasetUri } from "./dataset-uri";
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { assertOpAllowed, type SessionContext } from "@data-pilot/core";
-import { ChildProcessHost } from "@data-pilot/runtime-node";
 
-let host: ChildProcessHost | undefined;
-
-function trustContext(): SessionContext {
-  const trusted = vscode.workspace.isTrusted;
-  return { trustMode: trusted ? "trusted" : "untrusted-limited" };
-}
+let engine: ExtensionEngineHost | undefined;
+let savedQueryStore: SavedQueryStore | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const workerEntry = context.asAbsolutePath(path.join("out", "engine-worker.js"));
+  engine = new ExtensionEngineHost(context);
+  engine.registerTrustListener();
+  savedQueryStore = new SavedQueryStore(context);
 
-  const openCmd = vscode.commands.registerCommand(
-    "dataPilot.openDataset",
-    async () => {
-      const ctx = trustContext();
-      const blocked = assertOpAllowed(ctx, "openDataset");
-      if (blocked) {
-        void vscode.window.showErrorMessage(blocked.message);
+  if (!engine || !savedQueryStore) return;
+
+  const workerPath = context.asAbsolutePath(path.join("out", "engine-worker.js"));
+  if (fs.existsSync(workerPath)) {
+    logInfo(`Extension active. Engine worker: ${workerPath}`);
+  } else {
+    logInfo(`Extension active but engine worker missing: ${workerPath}`);
+  }
+
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      DATA_PILOT_VIEW_TYPE,
+      new DatasetCustomEditorProvider(context, engine, savedQueryStore),
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
+  );
+
+  const explorerView = new DatasetExplorerWebviewProvider(context, engine, savedQueryStore);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(DATA_PILOT_EXPLORER_VIEW_ID, explorerView, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
+  let syncEditorTimer: ReturnType<typeof setTimeout> | undefined;
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!explorerView.hasSession()) return;
+      if (syncEditorTimer) clearTimeout(syncEditorTimer);
+      syncEditorTimer = setTimeout(() => {
+        explorerView.syncFromActiveEditor(editor);
+      }, 300);
+    }),
+  );
+
+  const openFromUri = async (uri: vscode.Uri): Promise<void> => {
+    if (!engine || !savedQueryStore) return;
+    await openDatasetUri(engine, context, savedQueryStore, uri, explorerView);
+  };
+
+  const openCmd = vscode.commands.registerCommand("dataPilot.openDataset", async () => {
+    const blocked = assertOpAllowed(
+      { trustMode: workspaceTrustMode() },
+      "openDataset",
+    );
+    if (blocked) {
+      void vscode.window.showErrorMessage(blocked.message);
+      return;
+    }
+
+    const uri = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: { Datasets: ["csv", "jsonl", "ndjson"] },
+      title: "Open dataset (CSV or JSONL)",
+    });
+    if (!uri?.[0]) return;
+    await openFromUri(uri[0]);
+  });
+
+  const openResourceCmd = vscode.commands.registerCommand(
+    "dataPilot.openDatasetResource",
+    async (uri?: vscode.Uri) => {
+      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!target) {
+        void vscode.window.showInformationMessage(
+          "Select a CSV or JSONL file, or use “Data Pilot: Open Dataset”.",
+        );
         return;
       }
-
-      const uri = await vscode.window.showOpenDialog({
-        canSelectMany: false,
-        filters: { Datasets: ["csv", "jsonl"] },
-        title: "Open dataset (CSV or JSONL)",
-      });
-      if (!uri?.[0]) return;
-
-      // Phase 0: prove child-process launch via process.execPath (no separate Node).
-      try {
-        if (!host) {
-          host = new ChildProcessHost({
-            workerEntry,
-            trustMode: ctx.trustMode,
-            execPath: process.execPath,
-            rssLimitMb: vscode.workspace
-              .getConfiguration("dataPilot")
-              .get<number>("rssLimitMb", 256),
-          });
-          const { startupMs } = await host.start();
-          const ping = await host.request("ping", undefined, { timeoutMs: 3000 });
-          const rss =
-            ping.ok && ping.result && typeof ping.result === "object"
-              ? (ping.result as { rssMb?: number }).rssMb
-              : undefined;
-          void vscode.window.showInformationMessage(
-            `Data Pilot engine ready (${startupMs.toFixed(0)} ms). Opened ${uri[0].fsPath}` +
-              (rss !== undefined ? ` · child RSS ${rss} MiB` : "") +
-              (ctx.trustMode === "untrusted-limited"
-                ? " · untrusted limited mode"
-                : ""),
-          );
-        } else {
-          void vscode.window.showInformationMessage(
-            `Dataset selected: ${uri[0].fsPath} (preview pipeline arrives in Phase 1)`,
-          );
-        }
-      } catch (err) {
-        void vscode.window.showErrorMessage(
-          `Data Pilot engine failed to start: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      await openFromUri(target);
     },
   );
 
-  context.subscriptions.push(openCmd);
+  const showLogCmd = vscode.commands.registerCommand("dataPilot.showLog", () => {
+    dataPilotLog().show(true);
+  });
+
+  const openCustomEditorCmd = vscode.commands.registerCommand(
+    "dataPilot.openDatasetCustomEditor",
+    async (uri?: vscode.Uri) => {
+      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!target || !isDatasetUri(target)) {
+        void vscode.window.showInformationMessage("Open a CSV or JSONL file first.");
+        return;
+      }
+      if (!engine || !savedQueryStore) return;
+      await openDatasetUri(engine, context, savedQueryStore, target, explorerView, "custom-editor");
+    },
+  );
+
+  const refreshPreviewCmd = vscode.commands.registerCommand(
+    "dataPilot.refreshExplorerPreview",
+    async () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri || !isDatasetUri(uri)) {
+        void vscode.window.showInformationMessage("Focus a CSV or JSONL editor tab to refresh.");
+        return;
+      }
+      await explorerView.loadDataset(uri.fsPath, { force: true });
+    },
+  );
+
+  context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd, refreshPreviewCmd);
   context.subscriptions.push({
     dispose: () => {
-      void host?.stop();
-      host = undefined;
+      void engine?.stop();
+      engine = undefined;
+      savedQueryStore = undefined;
     },
   });
 }
 
 export async function deactivate(): Promise<void> {
-  await host?.stop();
-  host = undefined;
+  await engine?.stop();
+  engine = undefined;
+  savedQueryStore = undefined;
 }

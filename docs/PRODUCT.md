@@ -1,6 +1,6 @@
 # Data Pilot — Product
 
-**Status:** Phase 0 foundation  
+**Status:** Phase 4 — Safe fixture edit (in progress)  
 **Author:** Ángel Jiménez Ríos  
 **Plan:** Context `docs/data-pilot-plan.md` (project store) · decisions D-001…D-006
 
