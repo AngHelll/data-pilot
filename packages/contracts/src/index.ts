@@ -67,6 +67,19 @@ export interface Diagnostic {
   related?: Array<{ message: string; path?: string }>;
 }
 
+export interface KeyDiffChange {
+  key: DataValue;
+  columns: string[];
+}
+
+export interface KeyDiffResult {
+  completion: "complete" | "error";
+  diagnostics: Diagnostic[];
+  onlyLeft: DataValue[];
+  onlyRight: DataValue[];
+  changed: KeyDiffChange[];
+}
+
 export interface QueryBudget {
   maxRows?: number;
   maxBytes?: number;
@@ -136,6 +149,7 @@ export const UNTRUSTED_BLOCKED_OPS = [
   "globalScan",
   "agentQuery",
   "executeQuery",
+  "compareDatasets",
 ] as const;
 
 export type EngineOp =

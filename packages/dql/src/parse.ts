@@ -19,7 +19,7 @@ export class ParseError extends Error {
   }
 }
 
-const UNSUPPORTED = new Set(["sort", "group", "duplicates", "expect", "when"]);
+const UNSUPPORTED = new Set(["sort", "group", "duplicates"]);
 
 class Parser {
   private i = 0;
@@ -101,6 +101,8 @@ class Parser {
     if (kw === "select") return this.parseSelect();
     if (kw === "take") return this.parseTake();
     if (kw === "count") return this.parseCount();
+    if (kw === "expect") return this.parseExpect();
+    if (kw === "when") return this.parseWhenExpect();
     throw new ParseError(`Unknown stage '${t.value}'`, t.span);
   }
 
@@ -173,6 +175,73 @@ class Parser {
   private parseCount(): Stage {
     const tok = this.expectIdent("count");
     return { kind: "count", span: tok.span };
+  }
+
+  private parseExpect(): Stage {
+    const startTok = this.expectIdent("expect");
+    const next = this.peek();
+    if (next.kind === "ident" && next.value.toLowerCase() === "unique") {
+      this.advance();
+      const colTok = this.peek();
+      if (colTok.kind !== "ident") {
+        throw new ParseError(
+          `expect unique requires a column, got '${colTok.value || colTok.kind}'`,
+          colTok.span,
+        );
+      }
+      const column = this.parseColumnName();
+      return {
+        kind: "expectUnique",
+        column,
+        span: { start: startTok.span.start, end: colTok.span.end },
+      };
+    }
+    if (next.kind !== "ident" || next.value.toLowerCase() !== "count") {
+      throw new ParseError(
+        `'expect' is not supported in DQL 0.1`,
+        { start: startTok.span.start, end: next.span.end },
+        "unsupported-operation",
+      );
+    }
+    this.advance();
+    this.expect("eq");
+    const nTok = this.peek();
+    if (nTok.kind !== "integer") {
+      throw new ParseError(
+        `expect count requires an integer literal, got '${nTok.value || nTok.kind}'`,
+        nTok.span,
+      );
+    }
+    this.advance();
+    const count = Number(nTok.value);
+    if (!Number.isInteger(count) || count < 0) {
+      throw new ParseError("expect count requires a non-negative integer", nTok.span);
+    }
+    return {
+      kind: "expectCount",
+      count,
+      span: { start: startTok.span.start, end: nTok.span.end },
+    };
+  }
+
+  private parseWhenExpect(): Stage {
+    const startTok = this.expectIdent("when");
+    const when = this.parseOr();
+    const expectTok = this.peek();
+    if (expectTok.kind !== "ident" || expectTok.value.toLowerCase() !== "expect") {
+      throw new ParseError(
+        `when requires expect, got '${expectTok.value || expectTok.kind}'`,
+        expectTok.span,
+      );
+    }
+    this.advance();
+    const expectPred = this.parseOr();
+    return {
+      kind: "whenExpect",
+      when,
+      expect: expectPred,
+      span: { start: startTok.span.start, end: expectPred.span.end },
+    };
   }
 
   private parseColumnName(): string {
@@ -384,6 +453,7 @@ function validatePipeline(stages: Stage[]): void {
   let seenSelect = false;
   let seenTake = false;
   let seenCount = false;
+  let seenExpect = false;
   let phase: "find" | "where" | "select" | "tail" = "find";
 
   for (const stage of stages) {
@@ -411,7 +481,7 @@ function validatePipeline(stages: Stage[]): void {
       continue;
     }
     if (stage.kind === "take") {
-      if (seenTake || seenCount || phase === "tail") {
+      if (seenTake || seenCount || seenExpect || phase === "tail") {
         throw new ParseError("Invalid pipeline: take placement", stage.span, "invalid-pipeline");
       }
       seenTake = true;
@@ -419,7 +489,7 @@ function validatePipeline(stages: Stage[]): void {
       continue;
     }
     if (stage.kind === "count") {
-      if (seenCount || seenTake || phase === "tail") {
+      if (seenCount || seenTake || seenExpect || phase === "tail") {
         throw new ParseError(
           "Invalid pipeline: count must be terminal and exclusive of take",
           stage.span,
@@ -427,6 +497,22 @@ function validatePipeline(stages: Stage[]): void {
         );
       }
       seenCount = true;
+      phase = "tail";
+      continue;
+    }
+    if (
+      stage.kind === "expectCount" ||
+      stage.kind === "expectUnique" ||
+      stage.kind === "whenExpect"
+    ) {
+      if (seenExpect || seenCount) {
+        throw new ParseError(
+          "Invalid pipeline: expect must be terminal and cannot follow count",
+          stage.span,
+          "invalid-pipeline",
+        );
+      }
+      seenExpect = true;
       phase = "tail";
     }
   }

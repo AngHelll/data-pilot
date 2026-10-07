@@ -31,6 +31,12 @@ function not3(a: Tri): Tri {
   return !a;
 }
 
+function displayConcrete(v: DataValue): string {
+  if (v.kind === "string") return JSON.stringify(v.value);
+  if (v.kind === "null" || v.kind === "missing") return v.kind;
+  return String(v.value);
+}
+
 function compareNumeric(a: string, b: string): number {
   if (/^-?\d+$/.test(a) && /^-?\d+$/.test(b)) {
     const bi = BigInt(a) - BigInt(b);
@@ -44,7 +50,7 @@ function compareNumeric(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function cmpValues(op: string, left: DataValue, right: DataValue): Tri {
+export function cmpValues(op: string, left: DataValue, right: DataValue): Tri {
   if (left.kind === "null" || left.kind === "missing" || right.kind === "null" || right.kind === "missing") {
     return "unknown";
   }
@@ -285,17 +291,30 @@ export async function executeDql(
     | Extract<Stage, { kind: "take" }>
     | undefined;
   const countStage = query.stages.find((s) => s.kind === "count");
+  const expectStage = query.stages.find((s) => s.kind === "expectCount") as
+    | Extract<Stage, { kind: "expectCount" }>
+    | undefined;
+  const expectUnique = query.stages.find((s) => s.kind === "expectUnique") as
+    | Extract<Stage, { kind: "expectUnique" }>
+    | undefined;
+  const whenExpect = query.stages.find((s) => s.kind === "whenExpect") as
+    | Extract<Stage, { kind: "whenExpect" }>
+    | undefined;
 
   const outColumns = selectStage?.columns ?? session.header;
-  // Without take/count, cap returned rows so open-ended queries stay bounded.
+  // Without take/count/expect, cap returned rows so open-ended queries stay bounded.
+  const counting = Boolean(countStage || expectStage || expectUnique || whenExpect);
   const maxRows =
     takeStage?.count ??
-    (countStage ? undefined : (budget.maxRows ?? 200));
+    (counting ? undefined : (budget.maxRows ?? 200));
   const maxScanBytes = budget.maxScanBytes;
   const wallClockMs = budget.wallClockMs;
   const started = Date.now();
 
   const outRows: DataValue[][] = [];
+  const seenUnique: DataValue[] = [];
+  let uniqueRepeat: DataValue | undefined;
+  let whenFailed = false;
   let matchCount = 0;
   let scannedRows = 0;
   let scannedBytes = 0;
@@ -334,7 +353,38 @@ export async function executeDql(
 
     matchCount += 1;
 
-    if (countStage) continue;
+    if (countStage || expectStage) {
+      if (expectStage && takeStage && matchCount >= takeStage.count) break;
+      continue;
+    }
+
+    if (expectUnique) {
+      const cell = map.get(expectUnique.column) ?? { kind: "missing" as const };
+      if (
+        uniqueRepeat === undefined &&
+        seenUnique.some((prev) => cmpValues("=", prev, cell) === true)
+      ) {
+        uniqueRepeat = cell;
+      } else if (!seenUnique.some((prev) => cmpValues("=", prev, cell) === true)) {
+        if (cell.kind !== "null" && cell.kind !== "missing") seenUnique.push(cell);
+      }
+      outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+      if (takeStage && outRows.length >= takeStage.count) break;
+      continue;
+    }
+
+    if (whenExpect) {
+      if (
+        !whenFailed &&
+        evalPred(whenExpect.when, map, params) === true &&
+        evalPred(whenExpect.expect, map, params) !== true
+      ) {
+        whenFailed = true;
+      }
+      outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+      if (takeStage && outRows.length >= takeStage.count) break;
+      continue;
+    }
 
     if (maxRows !== undefined && outRows.length >= maxRows) {
       // Still need to know if more matches exist for completion honesty when take is set —
@@ -372,6 +422,184 @@ export async function executeDql(
       ...(completion === "complete" ? { totalCount: matchCount } : {}),
       completion,
       scope: completion === "complete" ? "full" : "prefix",
+      diagnostics,
+      scannedBytes,
+      scannedRows,
+    };
+  }
+
+  if (expectStage) {
+    const completion = cancelled ? "cancelled" : truncated ? "truncated" : "complete";
+    if (completion !== "complete") {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "expect count is not exact because the scan did not finish",
+        range: expectStage.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: ["count"],
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "prefix",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    if (matchCount !== expectStage.count) {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: `expect count failed: got ${matchCount}, expected ${expectStage.count}`,
+        range: expectStage.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: ["count"],
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "full",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: ["count"],
+      rows: [[integerValue(String(matchCount))]],
+      rowCountReturned: 1,
+      totalCount: matchCount,
+      completion: "complete",
+      scope: "full",
+      diagnostics,
+      scannedBytes,
+      scannedRows,
+    };
+  }
+
+  if (expectUnique) {
+    const completion = cancelled ? "cancelled" : truncated ? "truncated" : "complete";
+    if (completion !== "complete") {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "expect unique is not exact because the scan did not finish",
+        range: expectUnique.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "prefix",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    if (uniqueRepeat) {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: `expect unique ${expectUnique.column} failed: repeated ${displayConcrete(uniqueRepeat)}`,
+        range: expectUnique.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "full",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: outColumns,
+      rows: outRows,
+      rowCountReturned: outRows.length,
+      completion: "complete",
+      scope: "full",
+      diagnostics,
+      scannedBytes,
+      scannedRows,
+    };
+  }
+
+  if (whenExpect) {
+    const completion = cancelled ? "cancelled" : truncated ? "truncated" : "complete";
+    if (completion !== "complete") {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "when expect is not exact because the scan did not finish",
+        range: whenExpect.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "prefix",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    if (whenFailed) {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "when expect failed: a row matched when and expect was not true",
+        range: whenExpect.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "full",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: outColumns,
+      rows: outRows,
+      rowCountReturned: outRows.length,
+      completion: "complete",
+      scope: "full",
       diagnostics,
       scannedBytes,
       scannedRows,

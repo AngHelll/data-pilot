@@ -59,6 +59,12 @@ function fmtStage(s: Stage): string {
       return `take ${s.count}`;
     case "count":
       return "count";
+    case "expectCount":
+      return `expect count = ${s.count}`;
+    case "expectUnique":
+      return `expect unique ${s.column}`;
+    case "whenExpect":
+      return `when ${fmtPred(s.when)} expect ${fmtPred(s.expect)}`;
   }
 }
 

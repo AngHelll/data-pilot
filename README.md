@@ -69,22 +69,12 @@ Results: [`docs/spikes/`](./docs/spikes/).
 
 ```bash
 npm run extension:compile
-# Open repo root in VS Code / Cursor → Run “Extension: Development Host”
-# Command palette: “Data Pilot: Open Dataset” → pick fixtures/sample/tiny.csv
 npm run extension:package     # → tmp/data-pilot.vsix
 ```
 
-Phase 3 **webview panel**: schema/describe, parse warnings, preview, inspect, DQL plan/run/cancel, **Save query** (workspace state), **Export result** (engine returns content → host save dialog). Untrusted = preview/inspect only (D-005).
+**v0.1 open path:** Install from VSIX (`tmp/data-pilot.vsix`). This check is not Extension Development Host. Open `fixtures/sample/tiny.csv` as a **text** file, or Command Palette → **Data Pilot: Open Dataset** and pick that file. The Explorer **Data Pilot** panel shows schema, parse warnings, a bounded preview, cell inspect, DQL (Check query, Run query, Save query, Export result), and fixture edit (Preview diff, then Apply save). Untrusted workspaces stay on preview and inspect (D-005).
 
-**Open CSV/JSONL (like Rainbow CSV, but as a dataset view):** Rainbow CSV hooks the **text editor** (syntax colors). Data Pilot registers a **Custom Editor** (`dataPilot.dataset`) with preview + engine — use **Open With → Data Pilot** once, then **Configure Default Editor for '*.csv'** so a single click opens Data Pilot. To edit raw text again: tab context → **Reopen Editor With… → Text Editor**.
-
-```json
-// settings.json (optional — same as UI default editor)
-"workbench.editorAssociations": {
-  "*.csv": "dataPilot.dataset",
-  "*.jsonl": "dataPilot.dataset"
-}
-```
+The Custom Editor (`dataPilot.dataset`, **Data Pilot: Open as Custom Editor**) is optional and outside this close. Do not set `workbench.editorAssociations` for `*.csv` or `*.jsonl`.
 
 Re-pack after changes: `npm run extension:package` → install `tmp/data-pilot.vsix`.
 

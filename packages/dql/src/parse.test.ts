@@ -38,6 +38,78 @@ describe("DQL 0.1 parse", () => {
     assert.equal(q.stages[1]?.kind, "count");
   });
 
+  it("parses expect count and formats canonical spacing", () => {
+    const q = parseDql('where country = "MX"|expect count = 2');
+    assert.equal(q.version, "0.1");
+    assert.equal(q.stages[1]?.kind, "expectCount");
+    if (q.stages[1]?.kind === "expectCount") assert.equal(q.stages[1].count, 2);
+    assert.equal(formatDql(q), 'where country = "MX" | expect count = 2');
+  });
+
+  it("rejects other expect forms, a count before expect, and a negative N", () => {
+    assert.throws(
+      () => parseDql("expect nope"),
+      (err: unknown) => err instanceof ParseError && err.code === "unsupported-operation",
+    );
+    assert.throws(
+      () => parseDql("when balance > 1"),
+      (err: unknown) => err instanceof ParseError && err.code === "parse-error",
+    );
+    assert.throws(
+      () => parseDql("count | expect count = 2"),
+      (err: unknown) => err instanceof ParseError && err.code === "invalid-pipeline",
+    );
+    assert.throws(
+      () => parseDql("expect count = -1"),
+      (err: unknown) => err instanceof ParseError && err.code === "parse-error",
+    );
+  });
+
+  it("parses expect unique and formats it", () => {
+    const q = parseDql("expect unique country");
+    assert.equal(q.version, "0.1");
+    assert.equal(q.stages[0]?.kind, "expectUnique");
+    if (q.stages[0]?.kind === "expectUnique") assert.equal(q.stages[0].column, "country");
+    assert.equal(formatDql(q), "expect unique country");
+  });
+
+  it("rejects count before expect unique and an unknown unique column", () => {
+    assert.throws(
+      () => parseDql("count | expect unique id"),
+      (err: unknown) => err instanceof ParseError && err.code === "invalid-pipeline",
+    );
+    const result = analyzeDql("expect unique nope", [
+      { name: "id", inferredType: "string" },
+    ]);
+    assert.ok(result.diagnostics.some((d) => d.code === "unknown-column"));
+  });
+
+  it("parses when expect and formats it", () => {
+    const q = parseDql('when country = "MX" expect balance > 1000');
+    assert.equal(q.version, "0.1");
+    assert.equal(q.stages[0]?.kind, "whenExpect");
+    assert.equal(formatDql(q), 'when country = "MX" expect balance > 1000');
+  });
+
+  it("rejects a count before when expect and a column outside select", () => {
+    assert.throws(
+      () => parseDql('count | when country = "MX" expect name = "Ada"'),
+      (err: unknown) => err instanceof ParseError && err.code === "invalid-pipeline",
+    );
+    const result = analyzeDql('select name | when country = "MX" expect name = "Ada"', [
+      { name: "name", inferredType: "string" },
+      { name: "country", inferredType: "string" },
+    ]);
+    assert.ok(result.diagnostics.some((d) => d.code === "unknown-column"));
+  });
+
+  it("rejects compare as not dql", () => {
+    assert.throws(
+      () => parseDql("compare"),
+      (err: unknown) => err instanceof ParseError,
+    );
+  });
+
   it("rejects sort as unsupported", () => {
     assert.throws(
       () => parseDql("sort by balance"),

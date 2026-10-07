@@ -11,9 +11,9 @@ export interface SessionContext {
 
 export function assertOpAllowed(
   ctx: SessionContext,
-  op: EngineOp,
+  op: EngineOp | "compareDatasets",
 ): Diagnostic | null {
-  if (ctx.trustMode === "untrusted-limited" && !isUntrustedAllowed(op)) {
+  if (ctx.trustMode === "untrusted-limited" && (op === "compareDatasets" || !isUntrustedAllowed(op))) {
     return {
       code: "untrusted-blocked",
       severity: "error",

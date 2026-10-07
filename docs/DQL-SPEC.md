@@ -6,6 +6,8 @@
 
 This is the canonical grammar/semantics contract for Data Pilot Query Language 0.1. Phase 2 implements a parser with AST and source spans against this spec.
 
+§4.6 `expect count = N`, §4.7 `expect unique`, and §4.8 `when … expect` are accepted by the parser. Other `expect` forms are not. §12 compare-by-key runs on two open revisions. It is not a DQL stage and it has no panel control.
+
 ---
 
 ## 1. Scope
@@ -25,7 +27,9 @@ This is the canonical grammar/semantics contract for Data Pilot Query Language 0
 
 ### Deferred (v0.2+)
 
-`sort`, grouping / aggregates beyond `count`, `duplicates`, `expect` / `when…expect`, joins, window functions, arbitrary SQL/JS.
+`sort`, grouping / aggregates beyond `count`, `duplicates`, joins, window functions, arbitrary SQL/JS.
+
+`expect count = N` (§4.6), `expect unique` (§4.7), and `when … expect` (§4.8) are accepted by the parser.
 
 Unsupported constructs MUST produce a clear `unsupported-operation` (or parse) diagnostic — never silent ignore.
 
@@ -105,6 +109,51 @@ Recommended stage order:
 ```text
 [find] → [where]* → [select]? → (take | count)?
 ```
+
+### `expect count` pipeline (specified, parser later)
+
+```text
+stage := … | expectCountStage
+expectCountStage := 'expect' 'count' '=' integerLiteral
+```
+
+Allowed order:
+
+```text
+[find] → [where]* → [select]? → [take]? → expect count = N
+```
+
+At most one `expect count`. It is terminal: nothing may follow it. `count | expect count = N` is `invalid-pipeline` because `count` is already terminal. `expect count = N | where …` is `invalid-pipeline`.
+
+### `expect unique` pipeline (specified, parser later)
+
+```text
+expectUniqueStage := 'expect' 'unique' column
+```
+
+Allowed order:
+
+```text
+[find] → [where]* → [select]? → [take]? → expect unique column
+```
+
+At most one `expect unique`. It is terminal. It cannot share a pipeline with `count` or `expect count` (`invalid-pipeline`). If `select` is present, the column must be in that list.
+
+### `when … expect` pipeline (specified, parser later)
+
+```text
+whenExpectStage := 'when' predicate 'expect' predicate
+```
+
+Both predicates use the predicate grammar `where` already accepts.
+
+Allowed order:
+
+```text
+[find] → [where]* → [select]? → [take]? → when <predicate> expect <predicate>
+```
+
+At most one. It is terminal. It cannot share a pipeline with `count`, `expect count`, or `expect unique` (`invalid-pipeline`). If `select` is present, every column referenced by either predicate must be in that list.
 
 ---
 
@@ -193,6 +242,65 @@ countStage := 'count'
 - Exact `totalCount` only when `completion === "complete"`.  
 - Cancelled/truncated counts MUST NOT be presented as exact.
 
+### 4.6 `expect count` (contract only)
+
+```text
+expectCountStage := 'expect' 'count' '=' integerLiteral
+```
+
+The parser accepts this form. Any other `expect` form stays `unsupported-operation`.
+
+- Terminal. Counts the rows the upstream pipeline would emit, with the same meaning as `count`, including a preceding `take`. A `count` stage before it is not required and is illegal (`count` is already terminal).
+- `N >= 0`. `expect count = 0` is valid. A negative integer is `parse-error`. `N` is an integer literal; `expect count = $n` is out of this form.
+- Passes only when the count is exact (`completion === "complete"`) and equals `N`. No error diagnostic. The result reports that integer, the same way `count` does.
+- When the exact count differs from `N`: diagnostic `expect-failed`, severity error. The message includes the actual count and `N`. This is not a successful result.
+- When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the count is not exact. The stage does not pass and does not compare the partial count as if it were exact.
+- Formatter SHOULD emit the canonical spacing `expect count = 2`.
+- `when … expect` is specified in §4.8 and accepted by the parser. Any `expect` form other than §4.6, §4.7, and §4.8 stays deferred and MUST produce `unsupported-operation`, never a silent ignore.
+
+### 4.7 `expect unique` (contract only)
+
+```text
+expectUniqueStage := 'expect' 'unique' column
+```
+
+The parser accepts this form. `when … expect` is specified in §4.8 and accepted by the parser. Any other `expect` form stays `unsupported-operation`.
+
+- Terminal. Inspects the rows the upstream pipeline would emit, including a preceding `take`. If `select` is present, the named column must appear in that list.
+- Unknown column: `unknown-column`, not `expect-failed`.
+- Passes only when the scan is exact (`completion === "complete"`) and no two concrete values in that column are equal. No error diagnostic. The result remains those rows; it is not replaced by a count.
+- Two concrete values that compare equal under §5.3 (integer and decimal promote): diagnostic `expect-failed`, severity error. The message names the column and the repeated value. This is not a successful result.
+- **Null does not collide.** Several `null` cells do not fail uniqueness. `null` does not collide with a concrete value.
+- **Missing does not collide.** Several `missing` cells do not fail. `missing` does not collide with `null` or with a concrete value.
+- An empty string `""` is a concrete value. Two `""` cells fail. A CSV empty numeric cell tagged `null` (Dani’s `balance` in `fixtures/sample/tiny.csv`) is not `""`.
+- When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the result is not exact. Uniqueness of the prefix is not judged.
+- Formatter SHOULD emit `expect unique country`.
+
+### 4.8 `when … expect` (contract only)
+
+```text
+whenExpectStage := 'when' predicate 'expect' predicate
+```
+
+Both predicates are the same predicate grammar `where` already accepts. There are no new operators.
+
+The parser accepts this form. Compare-by-key (§12) runs on two open revisions and is not a DQL stage. `sort`, joins, and any other `expect` form stay `unsupported-operation`.
+
+- Terminal. Inspects the rows the upstream pipeline would emit, including a preceding `take`. It does not filter those rows: `when` is not a second `where`.
+- If `select` is present, every column referenced by either predicate must appear in that list.
+- Unknown column: `unknown-column`, not `expect-failed`.
+- Each predicate is `true`, `false`, or `unknown` under §5.4.
+- A row is judged only when the `when` predicate is `true`. A `false` or `unknown` `when` does not fire the rule and is not a violation.
+- When `when` is `true` and `expect` is `true`, the row holds.
+- When `when` is `true` and `expect` is `false` or `unknown`, the stage fails. `unknown` is not a pass. On `fixtures/sample/tiny.csv`, `when name = "Dani" expect balance > 0` fails because Dani’s `balance` is `null` and the comparison is not `true`.
+- Passes only when the scan is exact (`completion === "complete"`) and no judged row fails. Zero rows with a true `when` is a pass. No error diagnostic. The result remains those rows. It is not replaced by a count and it is not reduced to the `when` subset.
+- When a judged row fails: diagnostic `expect-failed`, severity error. The message says a row matched `when` and `expect` was not true. The first failure is enough. This is not a successful result. Rows are empty.
+- When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the result is not exact. The prefix is not judged, even if a failure was already seen.
+- `take` limits the rows that are judged. That limited set can be an exact scan.
+- At most one. It cannot share a pipeline with `count`, `expect count`, or `expect unique` (`invalid-pipeline`).
+- Formatter SHOULD emit `when country = "MX" expect balance > 1000`.
+- `expect count = N` and `expect unique` stay as specified. Compare-by-key (§12) runs on two open revisions and is not a DQL stage. `sort`, joins, and any other `expect` form stay deferred.
+
 ---
 
 ## 5. Types, inference, and invalid conversions
@@ -280,6 +388,30 @@ where `order id` = $oid | select `order id`, total
 find "MX" | where balance > $min | take 10
 ```
 
+```dql
+where country = "MX" | expect count = 2
+```
+
+On `fixtures/sample/tiny.csv` the query above matches Ada and Cam (2 rows). `where country = "MX" | expect count = 1` on that same file fails with `expect-failed`.
+
+```dql
+expect unique id
+expect unique country
+where country = "MX" | expect unique name
+expect unique balance
+```
+
+On that same file: `expect unique id` passes; `expect unique country` fails because `MX` is on Ada and Cam; `where country = "MX" | expect unique name` passes (Ada, Cam); `expect unique balance` passes (one `null`, Dani, and distinct concrete balances).
+
+```dql
+when country = "MX" expect balance > 1000
+when country = "MX" expect name = "Ada"
+when country = "ZZ" expect name = "Ada"
+when name = "Dani" expect balance > 0
+```
+
+On that same file: `when country = "MX" expect balance > 1000` passes (Ada and Cam); `when country = "MX" expect name = "Ada"` fails because Cam is `MX`; `when country = "ZZ" expect name = "Ada"` passes because no row has a true `when`; `when name = "Dani" expect balance > 0` fails because the comparison with `null` is not `true`.
+
 ---
 
 ## 9. Diagnostics (minimum codes)
@@ -292,6 +424,8 @@ find "MX" | where balance > $min | take 10
 | `type-mismatch` | known illegal comparison |
 | `unsupported-operation` | v0.2+ feature used |
 | `invalid-pipeline` | illegal stage order/combination |
+| `expect-failed` | `expect count = N` (§4.6): exact count ≠ `N`, or the scan is not exact. `expect unique` (§4.7): a repeated concrete value, or the scan is not exact. `when … expect` (§4.8): a row matched `when` and `expect` was not true, or the scan is not exact |
+| `compare-failed` | compare-by-key (§12): a repeated concrete key, or either scan is not exact |
 
 Each diagnostic follows the shared `Diagnostic` contract (`code`, `severity`, `message`, optional `range`).
 
@@ -313,6 +447,23 @@ These remain product questions; defaults above are sufficient to implement:
 
 - CSV null-token list and persistence (settings vs sidecar) — plan §7 #11  
 - Saved-query file location — plan §7 #15  
-- `expect … unique` null/missing policy — v0.2 only  
 
 **Phase 0 gate:** critical syntax/semantics in §§2–6 and pipeline rules in §3 are **closed**.
+
+---
+
+## 12. Compare by key (contract only)
+
+Compare is not a pipeline stage. It takes two revisions that are already open and one column name chosen by the user. The text does not contain a filesystem path. The engine child does not write workspace paths.
+
+The operation accepts two open revisions and a column name. Typing `compare` in the DQL box stays an error. There is no compare control on the panel. This is not the fixture-edit diff preview from phase 4.
+
+- The user names the key. There is no default key. `id` is not chosen automatically. Rows are not paired by position or by similarity.
+- The column must exist in both schemas. If it is missing from either side: `unknown-column`, not `compare-failed`.
+- Before pairing, the key is validated on each side the same way as `expect unique` (§4.7). Two concrete values that compare equal under §5.3: diagnostic `compare-failed`, severity error, and nothing is paired.
+- **Null is not a key.** **Missing is not a key.** They do not pair with each other or with a concrete value. Several `null` cells do not fail this validation. An empty string `""` is concrete: two `""` cells fail validation, as in §4.7.
+- A concrete value pairs with the other side only when the two keys are equal under §5.3 (integer and decimal promote; strings stay case-sensitive).
+- On a pair, the other columns are compared by name with that same equality. A column that exists on only one side is a difference for that row. It is not a key failure.
+- When both scans are exact and both keys are valid, each concrete key is one of: only on the left, only on the right, paired with at least one different value, or paired with no differences. Equal rows do not have to appear in a change list.
+- Zero differences and two exact scans is a pass: an empty result and no error diagnostic.
+- When either scan is not exact (cancelled or truncated): diagnostic `compare-failed`, severity error. The message says the result is not exact. The prefix diff is not returned as a pass, even if a difference was already seen.

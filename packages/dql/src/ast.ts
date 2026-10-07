@@ -45,7 +45,10 @@ export type Stage =
   | { kind: "where"; predicate: Predicate; span: Span }
   | { kind: "select"; columns: string[]; span: Span }
   | { kind: "take"; count: number; span: Span }
-  | { kind: "count"; span: Span };
+  | { kind: "count"; span: Span }
+  | { kind: "expectCount"; count: number; span: Span }
+  | { kind: "expectUnique"; column: string; span: Span }
+  | { kind: "whenExpect"; when: Predicate; expect: Predicate; span: Span };
 
 export interface DqlQuery {
   version: "0.1";
