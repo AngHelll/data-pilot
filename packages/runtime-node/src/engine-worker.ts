@@ -1,23 +1,33 @@
 /**
  * Child-process engine entrypoint.
  * Speaks newline-delimited JSON IPC (see docs/adr/0002-ipc-protocol.md).
- * Launched by ChildProcessHost — not imported by the VS Code extension host path.
  */
 
 import {
   PROTOCOL_VERSION,
   type Diagnostic,
   type EngineOp,
+  type ExecuteQueryPayload,
+  type InspectValuePayload,
   type IpcRequest,
   type IpcResponse,
+  type OpenDatasetPayload,
+  type PreviewPayload,
+  type TrustMode,
   isUntrustedAllowed,
 } from "@data-pilot/contracts";
+import { DatasetService, QueryService, isDiagnostic } from "@data-pilot/core";
+import { DatasetStore } from "@data-pilot/engine-stream";
 import { createInterface } from "node:readline";
 
-const trustMode = process.env.DATA_PILOT_TRUST_MODE ?? "trusted";
+const trustMode = (process.env.DATA_PILOT_TRUST_MODE ?? "trusted") as TrustMode;
 const rssLimitMb = Number(process.env.DATA_PILOT_RSS_LIMIT_MB ?? "0");
 
-let cancelled = new Set<string>();
+const store = new DatasetStore();
+const datasets = new DatasetService(store, trustMode);
+const queries = new QueryService(store, trustMode);
+
+const cancelled = new Set<string>();
 const inflight = new Map<string, AbortController>();
 
 function respond(response: IpcResponse): void {
@@ -46,6 +56,38 @@ function rssMb(): number {
   return Math.round((process.memoryUsage().rss / (1024 * 1024)) * 100) / 100;
 }
 
+function asRecord(payload: unknown): Record<string, unknown> {
+  return typeof payload === "object" && payload !== null
+    ? (payload as Record<string, unknown>)
+    : {};
+}
+
+async function handleSpikePreview(
+  requestId: string,
+  payload: PreviewPayload,
+  controller: AbortController,
+): Promise<void> {
+  if (payload.crash) process.exit(42);
+  const allocateMb = payload.allocateMb ?? 0;
+  const workMs = payload.workMs ?? 5;
+  const buffers: Buffer[] = [];
+  if (allocateMb > 0) buffers.push(Buffer.alloc(allocateMb * 1024 * 1024, 1));
+  const started = Date.now();
+  while (Date.now() - started < workMs) {
+    if (controller.signal.aborted || cancelled.has(requestId)) {
+      ok(requestId, {
+        completion: "cancelled",
+        rssMb: rssMb(),
+        note: "cooperative cancel",
+      });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  void buffers;
+  ok(requestId, { completion: "complete", rows: [], rssMb: rssMb() });
+}
+
 async function handle(req: IpcRequest): Promise<void> {
   if (req.protocolVersion !== PROTOCOL_VERSION) {
     fail(req.requestId, {
@@ -66,12 +108,9 @@ async function handle(req: IpcRequest): Promise<void> {
   }
 
   if (req.op === "cancelJob") {
+    const body = asRecord(req.payload);
     const target =
-      typeof req.payload === "object" &&
-      req.payload !== null &&
-      "requestId" in req.payload
-        ? String((req.payload as { requestId: string }).requestId)
-        : req.requestId;
+      typeof body.requestId === "string" ? body.requestId : req.requestId;
     cancelled.add(target);
     inflight.get(target)?.abort();
     ok(req.requestId, { cancelled: target });
@@ -92,61 +131,127 @@ async function handle(req: IpcRequest): Promise<void> {
     ok(req.requestId, {
       pid: process.pid,
       rssMb: rssMb(),
-      heapUsedMb: Math.round((process.memoryUsage().heapUsed / (1024 * 1024)) * 100) / 100,
+      heapUsedMb:
+        Math.round((process.memoryUsage().heapUsed / (1024 * 1024)) * 100) / 100,
       uptimeMs: Math.round(process.uptime() * 1000),
     });
     return;
   }
 
-  // Spike-only synthetic workloads — real dataset ops arrive in later phases.
-  if (req.op === "preview") {
-    const controller = new AbortController();
-    inflight.set(req.requestId, controller);
-    try {
-      const payload = (req.payload ?? {}) as {
-        allocateMb?: number;
-        workMs?: number;
-        crash?: boolean;
-      };
-      if (payload.crash) {
-        process.exit(42);
-      }
-      const allocateMb = payload.allocateMb ?? 0;
-      const workMs = payload.workMs ?? 5;
-      const buffers: Buffer[] = [];
-      if (allocateMb > 0) {
-        buffers.push(Buffer.alloc(allocateMb * 1024 * 1024, 1));
-      }
-      const started = Date.now();
-      while (Date.now() - started < workMs) {
-        if (controller.signal.aborted || cancelled.has(req.requestId)) {
-          ok(req.requestId, {
-            completion: "cancelled",
-            rssMb: rssMb(),
-            note: "cooperative cancel",
+  const controller = new AbortController();
+  inflight.set(req.requestId, controller);
+  try {
+    switch (req.op) {
+      case "openDataset": {
+        const p = asRecord(req.payload) as unknown as OpenDatasetPayload;
+        if (!p.path) {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "openDataset requires path",
           });
           return;
         }
-        await new Promise((r) => setTimeout(r, 1));
+        const result = await datasets.open(p.path, {
+          ...(p.format !== undefined ? { format: p.format } : {}),
+        });
+        ok(req.requestId, result);
+        return;
       }
-      void buffers;
-      ok(req.requestId, {
-        completion: "complete",
-        rows: [],
-        rssMb: rssMb(),
-      });
-    } finally {
-      inflight.delete(req.requestId);
-      cancelled.delete(req.requestId);
+      case "describeDataset": {
+        const datasetId = String(asRecord(req.payload).datasetId ?? "");
+        ok(req.requestId, datasets.describe(datasetId));
+        return;
+      }
+      case "preview": {
+        const p = asRecord(req.payload) as unknown as PreviewPayload;
+        if (!p.datasetId && (p.allocateMb || p.workMs || p.crash)) {
+          await handleSpikePreview(req.requestId, p, controller);
+          return;
+        }
+        if (!p.datasetId) {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "preview requires datasetId",
+          });
+          return;
+        }
+        const result = await datasets.preview(
+          p.datasetId,
+          p.budget,
+          req.requestId,
+          controller.signal,
+        );
+        ok(req.requestId, result);
+        return;
+      }
+      case "planQuery": {
+        const p = asRecord(req.payload) as unknown as ExecuteQueryPayload;
+        ok(
+          req.requestId,
+          queries.plan(p.datasetId, p.dql, p.params),
+        );
+        return;
+      }
+      case "executeQuery": {
+        const p = asRecord(req.payload) as unknown as ExecuteQueryPayload;
+        const result = await queries.execute(
+          p.datasetId,
+          p.dql,
+          p.params,
+          p.budget ?? {},
+          req.requestId,
+          controller.signal,
+        );
+        ok(req.requestId, result);
+        return;
+      }
+      case "inspectValue": {
+        const p = asRecord(req.payload) as unknown as InspectValuePayload;
+        const result = await datasets.inspect(p.datasetId, p.rowIndex, p.column);
+        if (isDiagnostic(result)) fail(req.requestId, result);
+        else ok(req.requestId, result);
+        return;
+      }
+      case "closeDataset": {
+        const datasetId = String(asRecord(req.payload).datasetId ?? "");
+        datasets.close(datasetId);
+        ok(req.requestId, { closed: datasetId });
+        return;
+      }
+      case "exportResult":
+      case "editFixture":
+      case "saveQuery":
+      case "globalScan":
+      case "agentQuery":
+        fail(req.requestId, {
+          code: "unsupported-operation",
+          severity: "error",
+          message: `Operation '${req.op}' is not implemented in Phase 1–2`,
+        });
+        return;
+      default:
+        fail(req.requestId, {
+          code: "unsupported-operation",
+          severity: "error",
+          message: `Unknown op '${req.op as EngineOp}'`,
+        });
     }
-    return;
+  } catch (err) {
+    if (isDiagnostic(err)) {
+      fail(req.requestId, err);
+      return;
+    }
+    fail(req.requestId, {
+      code: "runtime-error",
+      severity: "error",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    inflight.delete(req.requestId);
+    cancelled.delete(req.requestId);
   }
-
-  fail(req.requestId, {
-    code: "unsupported-operation",
-    severity: "error",
-    message: `Phase 0 stub does not implement '${req.op as EngineOp}' yet`,
-  });
 }
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -167,16 +272,15 @@ rl.on("line", (line) => {
   void handle(req);
 });
 
-// Soft RSS watchdog for the spike — host may also kill us externally.
 if (rssLimitMb > 0) {
   setInterval(() => {
     if (rssMb() > rssLimitMb) {
       process.stderr.write(
-        JSON.stringify({
+        `${JSON.stringify({
           event: "rss-limit-exceeded",
           rssMb: rssMb(),
           limitMb: rssLimitMb,
-        }) + "\n",
+        })}\n`,
       );
       process.exit(137);
     }
@@ -184,10 +288,10 @@ if (rssLimitMb > 0) {
 }
 
 process.stderr.write(
-  JSON.stringify({
+  `${JSON.stringify({
     event: "ready",
     pid: process.pid,
     node: process.version,
     trustMode,
-  }) + "\n",
+  })}\n`,
 );

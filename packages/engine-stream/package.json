@@ -21,6 +21,8 @@
     "spike:engine": "tsx src/spike-engine-compare.ts"
   },
   "dependencies": {
-    "@data-pilot/contracts": "0.0.0"
+    "@data-pilot/contracts": "0.0.0",
+    "@data-pilot/dql": "0.0.0",
+    "csv-parse": "^7.0.3"
   }
 }

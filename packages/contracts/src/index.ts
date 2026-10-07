@@ -189,3 +189,54 @@ export function isStaleResponse(
 export function isUntrustedAllowed(op: EngineOp): boolean {
   return (UNTRUSTED_ALLOWED_OPS as readonly string[]).includes(op);
 }
+
+/** Default preview budgets (Phase 0 proposal; overridable per call). */
+export const DEFAULT_PREVIEW_BUDGET: Required<
+  Pick<QueryBudget, "maxRows" | "maxBytes">
+> = {
+  maxRows: 200,
+  maxBytes: 1024 * 1024,
+};
+
+export interface OpenDatasetPayload {
+  path: string;
+  format?: "csv" | "jsonl" | "auto";
+}
+
+export interface PreviewPayload {
+  datasetId: string;
+  budget?: QueryBudget;
+  /** Phase 0 spike hooks — ignored for real dataset preview. */
+  allocateMb?: number;
+  workMs?: number;
+  crash?: boolean;
+}
+
+export interface ExecuteQueryPayload {
+  datasetId: string;
+  dql: string;
+  params?: Record<string, DataValue | string | number | boolean | null>;
+  budget?: QueryBudget;
+}
+
+export interface PlanQueryPayload {
+  datasetId: string;
+  dql: string;
+  params?: Record<string, DataValue | string | number | boolean | null>;
+}
+
+export interface InspectValuePayload {
+  datasetId: string;
+  rowIndex: number;
+  column: string;
+}
+
+export interface SavedQuery {
+  dqlVersion: "0.1";
+  dql: string;
+  params?: Record<string, DataValue>;
+  schemaColumnNames: string[];
+  savedAtMs: number;
+}
+
+export * from "./values.js";

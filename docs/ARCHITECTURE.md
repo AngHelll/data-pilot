@@ -17,11 +17,11 @@ CLI / agent later ─┼→ Application services (core) → DQL (parser/types/pl
 | Package | Role | Forbidden |
 |---|---|---|
 | `@data-pilot/contracts` | DTOs, IPC, Diagnostic, budgets, trust ops | VS Code, UI, natives |
-| `@data-pilot/dql` | Spec-aligned parser (Phase 2+) | Filesystem, VS Code |
-| `@data-pilot/core` | Sessions, trust gates, app services | VS Code, React |
-| `@data-pilot/engine-stream` | CSV/JSONL scans, predicates, select/take | UI |
+| `@data-pilot/dql` | DQL 0.1 tokenizer/parser/typecheck/formatter | Filesystem, VS Code |
+| `@data-pilot/core` | Dataset + query services, trust gates, CLI | VS Code, React |
+| `@data-pilot/engine-stream` | CSV/JSONL ingest, preview sessions, streaming executor | UI |
 | `@data-pilot/runtime-node` | Child process host, IPC, limits, kill/recover | Webview |
-| `@data-pilot/extension` | Commands, trust declaration, editor (later) | Business logic duplication; workspace deps |
+| `@data-pilot/extension` | Commands, trust declaration, editor (Phase 3+) | Business logic duplication; workspace deps |
 
 ## Runtime isolation (D-001)
 

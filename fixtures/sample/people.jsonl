@@ -1,0 +1,5 @@
+{"id": 1, "country": "MX", "balance": 52000.5, "name": "Ada"}
+{"id": 2, "country": "US", "balance": 1000, "name": "Bob"}
+{"id": 3, "country": "MX", "balance": 75000, "name": "Cam", "note": null}
+{"id": 4, "country": "ES", "name": "Dani"}
+{"id": 5, "country": "AR", "balance": 0, "name": "Eve"}

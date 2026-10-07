@@ -9,9 +9,13 @@ dependencies change (see docs/adr/0005-license-notices.md).
 TypeScript (Apache-2.0)
 https://github.com/microsoft/TypeScript
 -------------------------------------------------------------------------------
+csv-parse (MIT)
+https://github.com/adaltas/node-csv
+-------------------------------------------------------------------------------
 esbuild (MIT)
 https://github.com/evanw/esbuild
 -------------------------------------------------------------------------------
+
 @types/vscode / VS Code extension API typings (MIT)
 https://github.com/DefinitelyTyped/DefinitelyTyped
 -------------------------------------------------------------------------------

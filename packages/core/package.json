@@ -17,9 +17,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "cli": "tsx src/cli.ts"
   },
   "dependencies": {
-    "@data-pilot/contracts": "0.0.0"
+    "@data-pilot/contracts": "0.0.0",
+    "@data-pilot/dql": "0.0.0",
+    "@data-pilot/engine-stream": "0.0.0"
   }
 }

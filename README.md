@@ -2,7 +2,8 @@
 
 VS Code extension + bundled engine for exploring test datasets (CSV/JSONL) without loading everything into memory.
 
-Phase 0 delivers scaffolding, contracts/ADRs, a closed [DQL 0.1 spec](./docs/DQL-SPEC.md), and measured spikes (child process, streaming vs DuckDB candidate).
+**Phase 0:** scaffolding, ADRs, closed [DQL 0.1 spec](./docs/DQL-SPEC.md), spikes.  
+**Phase 1–2 (current):** bounded CSV/JSONL ingest + preview sessions, and headless DQL 0.1 against the streaming engine (child-process IPC included).
 
 ## Requirements
 
@@ -24,21 +25,43 @@ npm run build
 npm test
 ```
 
+### Preview a dataset (Phase 1)
+
+```bash
+npm run preview -- fixtures/sample/tiny.csv
+npm run preview -- fixtures/sample/people.jsonl
+npm run describe -- fixtures/sample/tiny.csv
+```
+
+Preview returns metadata (suggested column types), parse warnings, and a bounded row sample (default ≤200 rows / ≤1 MiB). Opening a file does **not** count or load the whole dataset.
+
+### Run DQL 0.1 headless (Phase 2)
+
+```bash
+npm run query -- fixtures/sample/tiny.csv 'where country = "MX" and balance > 50000 | select id, name | take 10'
+
+npm run query -- fixtures/sample/tiny.csv 'where country = $c | count' --param c=MX
+
+npm run query -- fixtures/sample/people.jsonl 'find "Ada" | take 5'
+```
+
+Supported (DQL 0.1): predicates, `find`, params, `select`, `take`, `count`.  
+Deferred: `sort`, grouping, `duplicates`, `expect`.
+
 ### Spikes (Phase 0 evidence)
 
 ```bash
-npm run spike:child-process   # startup / IPC / RSS / cancel / kill-recover
-npm run spike:engine          # streaming preview on synthetic CSV + DuckDB packaging notes
+npm run spike:child-process
+npm run spike:engine
 ```
 
-Results write to [`docs/spikes/`](./docs/spikes/).
+Results: [`docs/spikes/`](./docs/spikes/).
 
 ### Extension (local)
 
 ```bash
 npm run extension:compile
-# Open packages/extension in VS Code / Cursor and run “Extension: Development Host”
-# or package a VSIX:
+# Open packages/extension in VS Code / Cursor → “Extension: Development Host”
 npm run extension:package     # → tmp/data-pilot.vsix
 ```
 
@@ -46,25 +69,27 @@ npm run extension:package     # → tmp/data-pilot.vsix
 
 ```text
 packages/
-  contracts/       Shared DTOs, IPC, Diagnostic, trust allowlists
-  dql/             Spec stub (parser in Phase 2)
-  core/            App services / trust gates
-  engine-stream/   Streaming scanner (v0.1 default engine)
-  runtime-node/    Child-process host + worker + spikes
+  contracts/       DTOs, IPC, Diagnostic, trust allowlists
+  dql/             DQL 0.1 tokenizer / parser / typecheck / formatter
+  core/            Dataset + query services, trust gates, CLI
+  engine-stream/   CSV/JSONL ingest, preview sessions, streaming executor
+  runtime-node/    Child-process host + worker (IPC)
   extension/       VS Code extension (engines.vscode ≥1.101, trust limited)
 docs/
   DQL-SPEC.md      Closed DQL 0.1 specification
   adr/             Architecture decision records
   spikes/          Measured spike reports
+fixtures/sample/   Tiny CSV/JSONL examples
 ```
 
-## Trust
+## Trust (D-005)
 
-`untrustedWorkspaces.supported: "limited"` — open / metadata / preview / inspect only. Edit, export, global scans, and agents are blocked until the workspace is trusted.
+`untrustedWorkspaces.supported: "limited"` — open / metadata / preview / inspect only.  
+`executeQuery`, edit, export, global scans, and agents are blocked in untrusted mode (enforced in core handlers and the engine worker).
 
 ## License notices
 
-See [`NOTICE`](./NOTICE) and [`docs/adr/0005-license-notices.md`](./docs/adr/0005-license-notices.md). DuckDB remains a **candidate** (MIT); not bundled until packaging fits the ≤50 MiB/platform VSIX goal or a justified exception is recorded.
+See [`NOTICE`](./NOTICE). Bundled `csv-parse` is MIT. DuckDB remains a **candidate** (MIT); not bundled yet.
 
 ## Docs map
 

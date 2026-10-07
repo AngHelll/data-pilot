@@ -6,5 +6,9 @@
     "composite": true
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../contracts" }]
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../dql" },
+    { "path": "../engine-stream" }
+  ]
 }

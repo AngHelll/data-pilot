@@ -11,12 +11,15 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build -w @data-pilot/contracts && npm run build -w @data-pilot/dql && npm run build -w @data-pilot/engine-stream && npm run build -w @data-pilot/core && npm run build -w @data-pilot/runtime-node && npm run compile -w data-pilot-vscode",
+    "typecheck": "npm run typecheck -w @data-pilot/contracts && npm run typecheck -w @data-pilot/dql && npm run typecheck -w @data-pilot/engine-stream && npm run typecheck -w @data-pilot/core && npm run typecheck -w @data-pilot/runtime-node && npm run typecheck -w data-pilot-vscode",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "spike:child-process": "npm run spike -w @data-pilot/runtime-node",
     "spike:engine": "npm run spike:engine -w @data-pilot/engine-stream",
+    "preview": "tsx packages/core/src/cli.ts preview",
+    "query": "tsx packages/core/src/cli.ts query",
+    "describe": "tsx packages/core/src/cli.ts describe",
     "extension:compile": "npm run compile -w data-pilot-vscode",
     "extension:package": "npm run package -w data-pilot-vscode"
   },

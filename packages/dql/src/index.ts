@@ -1,19 +1,57 @@
 /**
- * DQL package stub — Phase 0 closes the spec only (see docs/DQL-SPEC.md).
- * Full tokenizer/parser arrives in Phase 2 after the spec gate.
+ * DQL 0.1 — tokenizer, parser, typecheck, formatter.
+ * No filesystem or VS Code imports.
  */
 
 export const DQL_VERSION = "0.1" as const;
 
-/** Placeholder AST root — shape locked in Phase 2 against DQL-SPEC. */
-export type DqlAst = {
-  version: typeof DQL_VERSION;
-  /** Raw source retained until parser produces a typed tree. */
-  source: string;
-};
+export type {
+  CaseMode,
+  DqlQuery,
+  Expr,
+  Predicate,
+  Span,
+  Stage,
+} from "./ast.js";
 
-export function unsupportedParser(_source: string): never {
-  throw new Error(
-    "DQL parser is not implemented in Phase 0. See docs/DQL-SPEC.md (closed before parser work).",
-  );
+export { parseDql, ParseError } from "./parse.js";
+export { tokenize, TokenizeError, type Token } from "./tokenize.js";
+export { typecheck, type TypecheckResult } from "./typecheck.js";
+export { formatDql } from "./format.js";
+
+import type { ColumnMeta, DataValue, Diagnostic } from "@data-pilot/contracts";
+import { parseDql, ParseError } from "./parse.js";
+import { typecheck } from "./typecheck.js";
+import type { DqlQuery } from "./ast.js";
+
+export interface AnalyzeResult {
+  query?: DqlQuery;
+  diagnostics: Diagnostic[];
+}
+
+/** Parse + typecheck in one step. */
+export function analyzeDql(
+  source: string,
+  columns: ColumnMeta[],
+  params: Record<string, DataValue | undefined> = {},
+): AnalyzeResult {
+  try {
+    const query = parseDql(source);
+    const { diagnostics } = typecheck(query, columns, params);
+    return { query, diagnostics };
+  } catch (err) {
+    if (err instanceof ParseError) {
+      return {
+        diagnostics: [
+          {
+            code: err.code,
+            severity: "error",
+            message: err.message,
+            range: err.span,
+          },
+        ],
+      };
+    }
+    throw err;
+  }
 }
