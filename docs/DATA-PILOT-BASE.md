@@ -4,7 +4,7 @@ This file anchors implementation to the product architecture roadmap.
 
 - **Authoritative plan (Context):** project store `docs/data-pilot-plan.md`  
 - **Closed decisions:** `docs/decisions.md` (D-001…D-006)  
-- **In-repo living docs:** [PRODUCT.md](./PRODUCT.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [DQL-SPEC.md](./DQL-SPEC.md), [adr/](./adr/)
+- **In-repo living docs:** [PRODUCT.md](./PRODUCT.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [UX-TARGET.md](./UX-TARGET.md), [DQL-SPEC.md](./DQL-SPEC.md), [adr/](./adr/)
 
 ## Locked decisions (do not reopen without Ángel)
 
@@ -20,3 +20,5 @@ This file anchors implementation to the product architecture roadmap.
 ## Implementation rule
 
 One phase per turn. Phase 0 gate must pass before Phase 1 ingest work.
+
+Phase 7 is the interface destination ([UX-TARGET.md](./UX-TARGET.md)). Phases 0–6 do not implement it. They keep the `where` stage, the Explorer v0.1 path, host-written edits, and a single child process so phase 7 can relocate those capabilities without a second dialect or a second engine.

@@ -20,4 +20,5 @@ v0.1 needs bounded-memory preview/filter/take/count on CSV/JSONL. DuckDB could a
 ## Consequences
 
 - Phase 1–2 invest in a correct streaming CSV/JSONL path.  
-- Phase 6 re-opens analytics with packaging proof.
+- Phase 6 re-opens analytics with packaging proof.  
+- Phase 6 measured a throwaway VSIX with `@duckdb/node-api@1.5.6-r.1` on darwin-arm64 at 34.51 MiB (under the 50 MiB cap). See [../spikes/phase6-duckdb-vsix.md](../spikes/phase6-duckdb-vsix.md). Other platforms were not measured. Streaming stays the default engine. DuckDB is not a dependency of the extension.

@@ -176,6 +176,7 @@ function checkStage(
       break;
     case "take":
     case "count":
+    case "expectCount":
       break;
   }
 }

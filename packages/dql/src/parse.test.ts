@@ -38,6 +38,33 @@ describe("DQL 0.1 parse", () => {
     assert.equal(q.stages[1]?.kind, "count");
   });
 
+  it("parses expect count and formats canonical spacing", () => {
+    const q = parseDql('where country = "MX"|expect count = 2');
+    assert.equal(q.version, "0.1");
+    assert.equal(q.stages[1]?.kind, "expectCount");
+    if (q.stages[1]?.kind === "expectCount") assert.equal(q.stages[1].count, 2);
+    assert.equal(formatDql(q), 'where country = "MX" | expect count = 2');
+  });
+
+  it("rejects other expect forms, a count before expect, and a negative N", () => {
+    assert.throws(
+      () => parseDql("expect unique"),
+      (err: unknown) => err instanceof ParseError && err.code === "unsupported-operation",
+    );
+    assert.throws(
+      () => parseDql("when balance > 1"),
+      (err: unknown) => err instanceof ParseError && err.code === "unsupported-operation",
+    );
+    assert.throws(
+      () => parseDql("count | expect count = 2"),
+      (err: unknown) => err instanceof ParseError && err.code === "invalid-pipeline",
+    );
+    assert.throws(
+      () => parseDql("expect count = -1"),
+      (err: unknown) => err instanceof ParseError && err.code === "parse-error",
+    );
+  });
+
   it("rejects sort as unsupported", () => {
     assert.throws(
       () => parseDql("sort by balance"),

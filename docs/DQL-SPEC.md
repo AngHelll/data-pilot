@@ -6,6 +6,8 @@
 
 This is the canonical grammar/semantics contract for Data Pilot Query Language 0.1. Phase 2 implements a parser with AST and source spans against this spec.
 
+§4.6 `expect count = N` is accepted by the parser. Other `expect` forms are not.
+
 ---
 
 ## 1. Scope
@@ -25,7 +27,9 @@ This is the canonical grammar/semantics contract for Data Pilot Query Language 0
 
 ### Deferred (v0.2+)
 
-`sort`, grouping / aggregates beyond `count`, `duplicates`, `expect` / `when…expect`, joins, window functions, arbitrary SQL/JS.
+`sort`, grouping / aggregates beyond `count`, `duplicates`, `when…expect`, `expect … unique`, joins, window functions, arbitrary SQL/JS.
+
+`expect count = N` is specified in §4.6. It is not a 0.1 parser feature.
 
 Unsupported constructs MUST produce a clear `unsupported-operation` (or parse) diagnostic — never silent ignore.
 
@@ -105,6 +109,21 @@ Recommended stage order:
 ```text
 [find] → [where]* → [select]? → (take | count)?
 ```
+
+### `expect count` pipeline (specified, parser later)
+
+```text
+stage := … | expectCountStage
+expectCountStage := 'expect' 'count' '=' integerLiteral
+```
+
+Allowed order:
+
+```text
+[find] → [where]* → [select]? → [take]? → expect count = N
+```
+
+At most one `expect count`. It is terminal: nothing may follow it. `count | expect count = N` is `invalid-pipeline` because `count` is already terminal. `expect count = N | where …` is `invalid-pipeline`.
 
 ---
 
@@ -193,6 +212,22 @@ countStage := 'count'
 - Exact `totalCount` only when `completion === "complete"`.  
 - Cancelled/truncated counts MUST NOT be presented as exact.
 
+### 4.6 `expect count` (contract only)
+
+```text
+expectCountStage := 'expect' 'count' '=' integerLiteral
+```
+
+The parser accepts this form. Any other `expect` form stays `unsupported-operation`.
+
+- Terminal. Counts the rows the upstream pipeline would emit, with the same meaning as `count`, including a preceding `take`. A `count` stage before it is not required and is illegal (`count` is already terminal).
+- `N >= 0`. `expect count = 0` is valid. A negative integer is `parse-error`. `N` is an integer literal; `expect count = $n` is out of this form.
+- Passes only when the count is exact (`completion === "complete"`) and equals `N`. No error diagnostic. The result reports that integer, the same way `count` does.
+- When the exact count differs from `N`: diagnostic `expect-failed`, severity error. The message includes the actual count and `N`. This is not a successful result.
+- When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the count is not exact. The stage does not pass and does not compare the partial count as if it were exact.
+- Formatter SHOULD emit the canonical spacing `expect count = 2`.
+- `expect unique`, `when … expect`, and any other `expect` form stay deferred and MUST produce `unsupported-operation`, never a silent ignore.
+
 ---
 
 ## 5. Types, inference, and invalid conversions
@@ -280,6 +315,12 @@ where `order id` = $oid | select `order id`, total
 find "MX" | where balance > $min | take 10
 ```
 
+```dql
+where country = "MX" | expect count = 2
+```
+
+On `fixtures/sample/tiny.csv` the query above matches Ada and Cam (2 rows). `where country = "MX" | expect count = 1` on that same file fails with `expect-failed` once a parser implements §4.6. Until then the 0.1 parser rejects the stage.
+
 ---
 
 ## 9. Diagnostics (minimum codes)
@@ -292,6 +333,7 @@ find "MX" | where balance > $min | take 10
 | `type-mismatch` | known illegal comparison |
 | `unsupported-operation` | v0.2+ feature used |
 | `invalid-pipeline` | illegal stage order/combination |
+| `expect-failed` | `expect count = N` (§4.6): exact count ≠ `N`, or the scan is not exact |
 
 Each diagnostic follows the shared `Diagnostic` contract (`code`, `severity`, `message`, optional `range`).
 

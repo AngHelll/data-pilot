@@ -59,6 +59,8 @@ function fmtStage(s: Stage): string {
       return `take ${s.count}`;
     case "count":
       return "count";
+    case "expectCount":
+      return `expect count = ${s.count}`;
   }
 }
 

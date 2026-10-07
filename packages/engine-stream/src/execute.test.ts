@@ -91,4 +91,65 @@ describe("DQL execute streaming", () => {
     void integerValue;
     store.close(handle.datasetId);
   });
+
+  it("passes expect count when the exact count matches", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql('where country = "MX" | expect count = 2', handle.columns);
+    assert.equal(analyzed.diagnostics.filter((d) => d.severity === "error").length, 0);
+    const result = await executeDql(store, handle.datasetId, analyzed.query!, {}, {}, "t5");
+    assert.equal(result.completion, "complete");
+    assert.equal(result.totalCount, 2);
+    assert.equal(result.rows[0]?.[0]?.kind, "integer");
+    assert.equal(
+      result.diagnostics.filter((d) => d.code === "expect-failed").length,
+      0,
+    );
+    store.close(handle.datasetId);
+  });
+
+  it("fails expect count without a success row when the count differs", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql('where country = "MX" | expect count = 1', handle.columns);
+    const result = await executeDql(store, handle.datasetId, analyzed.query!, {}, {}, "t6");
+    assert.equal(result.rowCountReturned, 0);
+    assert.equal(result.rows.length, 0);
+    assert.ok(result.diagnostics.some((d) => d.code === "expect-failed" && d.severity === "error"));
+    store.close(handle.datasetId);
+  });
+
+  it("counts rows after take for expect count", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql(
+      'where country = "MX" | take 1 | expect count = 1',
+      handle.columns,
+    );
+    const result = await executeDql(store, handle.datasetId, analyzed.query!, {}, {}, "t7");
+    assert.equal(result.completion, "complete");
+    assert.equal(result.totalCount, 1);
+    store.close(handle.datasetId);
+  });
+
+  it("does not pass expect count when the scan is cut short", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql("expect count = 0", handle.columns);
+    const result = await executeDql(
+      store,
+      handle.datasetId,
+      analyzed.query!,
+      {},
+      { maxScanBytes: 1 },
+      "t8",
+    );
+    assert.equal(result.rowCountReturned, 0);
+    assert.ok(
+      result.diagnostics.some(
+        (d) => d.code === "expect-failed" && d.message.includes("not exact"),
+      ),
+    );
+    store.close(handle.datasetId);
+  });
 });

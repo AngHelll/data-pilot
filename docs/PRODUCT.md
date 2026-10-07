@@ -1,6 +1,6 @@
 # Data Pilot — Product
 
-**Status:** Phase 4 — Safe fixture edit (in progress)  
+**Status:** Phase 6 — expect count parser (in progress)  
 **Author:** Ángel Jiménez Ríos  
 **Plan:** Context `docs/data-pilot-plan.md` (project store) · decisions D-001…D-006
 
@@ -16,7 +16,7 @@ VS Code extension (VSIX). Engine and DQL are independent of VS Code so CLI / CI 
 
 1. Open a dataset (CSV/JSONL) → metadata + bounded preview  
 2. See suggested types and parse warnings  
-3. Filter via UI or DQL (`country = "MX"`, `balance > 50000`)  
+3. Filter via UI or DQL (`where country = "MX"`, `where balance > 50000`)  
 4. Inspect candidates, save query, export a subset  
 5. Open the exported fixture, edit values, review diff before save  
 
@@ -41,4 +41,8 @@ Untrusted workspaces: **limited** read-only preview (explicit open, metadata, pr
 
 ## Out of scope for v0.1
 
-Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages.
+Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages. The phase 7 workspace layout in [UX-TARGET.md](./UX-TARGET.md) is also out of this flow: v0.1 stays a text editor plus the Explorer panel.
+
+## Interface destination (phase 7)
+
+[UX-TARGET.md](./UX-TARGET.md) is the agreed interface, scheduled as phase 7 in [ARCHITECTURE.md](./ARCHITECTURE.md): after this v0.1 close and phase 6 packaging/language work, before CLI/agents. Phases 0–6 keep DQL `where`, trust, budgets, and preview-diff apply so phase 7 can move those capabilities. They do not start the Activity Bar, the central dataset editor, or a native `.dql` editor.

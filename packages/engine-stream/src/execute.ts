@@ -285,12 +285,16 @@ export async function executeDql(
     | Extract<Stage, { kind: "take" }>
     | undefined;
   const countStage = query.stages.find((s) => s.kind === "count");
+  const expectStage = query.stages.find((s) => s.kind === "expectCount") as
+    | Extract<Stage, { kind: "expectCount" }>
+    | undefined;
 
   const outColumns = selectStage?.columns ?? session.header;
-  // Without take/count, cap returned rows so open-ended queries stay bounded.
+  // Without take/count/expect, cap returned rows so open-ended queries stay bounded.
+  const counting = Boolean(countStage || expectStage);
   const maxRows =
     takeStage?.count ??
-    (countStage ? undefined : (budget.maxRows ?? 200));
+    (counting ? undefined : (budget.maxRows ?? 200));
   const maxScanBytes = budget.maxScanBytes;
   const wallClockMs = budget.wallClockMs;
   const started = Date.now();
@@ -334,7 +338,10 @@ export async function executeDql(
 
     matchCount += 1;
 
-    if (countStage) continue;
+    if (countStage || expectStage) {
+      if (expectStage && takeStage && matchCount >= takeStage.count) break;
+      continue;
+    }
 
     if (maxRows !== undefined && outRows.length >= maxRows) {
       // Still need to know if more matches exist for completion honesty when take is set —
@@ -372,6 +379,66 @@ export async function executeDql(
       ...(completion === "complete" ? { totalCount: matchCount } : {}),
       completion,
       scope: completion === "complete" ? "full" : "prefix",
+      diagnostics,
+      scannedBytes,
+      scannedRows,
+    };
+  }
+
+  if (expectStage) {
+    const completion = cancelled ? "cancelled" : truncated ? "truncated" : "complete";
+    if (completion !== "complete") {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "expect count is not exact because the scan did not finish",
+        range: expectStage.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: ["count"],
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "prefix",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    if (matchCount !== expectStage.count) {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: `expect count failed: got ${matchCount}, expected ${expectStage.count}`,
+        range: expectStage.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: ["count"],
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "full",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: ["count"],
+      rows: [[integerValue(String(matchCount))]],
+      rowCountReturned: 1,
+      totalCount: matchCount,
+      completion: "complete",
+      scope: "full",
       diagnostics,
       scannedBytes,
       scannedRows,
