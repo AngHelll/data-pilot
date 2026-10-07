@@ -244,4 +244,58 @@ describe("DQL execute streaming", () => {
     );
     store.close(handle.datasetId);
   });
+
+  it("passes and fails when expect on tiny.csv", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+
+    const pass = analyzeDql('when country = "MX" expect balance > 1000', handle.columns);
+    const passResult = await executeDql(store, handle.datasetId, pass.query!, {}, {}, "w1");
+    assert.equal(passResult.completion, "complete");
+    assert.equal(passResult.rowCountReturned, 5);
+    assert.equal(passResult.diagnostics.filter((d) => d.code === "expect-failed").length, 0);
+
+    const cam = analyzeDql('when country = "MX" expect name = "Ada"', handle.columns);
+    const camResult = await executeDql(store, handle.datasetId, cam.query!, {}, {}, "w2");
+    assert.equal(camResult.rowCountReturned, 0);
+    assert.ok(camResult.diagnostics.some((d) => d.code === "expect-failed"));
+
+    const absent = analyzeDql('when country = "ZZ" expect name = "Ada"', handle.columns);
+    const absentResult = await executeDql(store, handle.datasetId, absent.query!, {}, {}, "w3");
+    assert.equal(absentResult.completion, "complete");
+    assert.equal(absentResult.rowCountReturned, 5);
+
+    const dani = analyzeDql('when name = "Dani" expect balance > 0', handle.columns);
+    const daniResult = await executeDql(store, handle.datasetId, dani.query!, {}, {}, "w4");
+    assert.equal(daniResult.rowCountReturned, 0);
+    assert.ok(daniResult.diagnostics.some((d) => d.code === "expect-failed"));
+
+    const taken = analyzeDql('take 1 | when country = "MX" expect name = "Ada"', handle.columns);
+    const takenResult = await executeDql(store, handle.datasetId, taken.query!, {}, {}, "w5");
+    assert.equal(takenResult.completion, "complete");
+    assert.equal(takenResult.rowCountReturned, 1);
+
+    store.close(handle.datasetId);
+  });
+
+  it("does not judge when expect on a cut-short scan", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql('when country = "MX" expect name = "Ada"', handle.columns);
+    const result = await executeDql(
+      store,
+      handle.datasetId,
+      analyzed.query!,
+      {},
+      { maxScanBytes: 1 },
+      "w6",
+    );
+    assert.equal(result.rowCountReturned, 0);
+    assert.ok(
+      result.diagnostics.some(
+        (d) => d.code === "expect-failed" && d.message.includes("not exact"),
+      ),
+    );
+    store.close(handle.datasetId);
+  });
 });

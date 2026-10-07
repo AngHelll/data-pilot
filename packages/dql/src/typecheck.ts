@@ -95,6 +95,36 @@ function checkExpr(
   }
 }
 
+function exprColumns(expr: Expr, out: Set<string>): void {
+  if (expr.kind === "column") out.add(expr.name);
+  if (expr.kind === "date") exprColumns(expr.arg, out);
+}
+
+function predColumns(pred: Predicate, out: Set<string>): void {
+  switch (pred.kind) {
+    case "and":
+    case "or":
+      predColumns(pred.left, out);
+      predColumns(pred.right, out);
+      break;
+    case "not":
+      predColumns(pred.inner, out);
+      break;
+    case "is":
+    case "contains":
+      exprColumns(pred.expr, out);
+      break;
+    case "in":
+      exprColumns(pred.expr, out);
+      for (const v of pred.values) exprColumns(v, out);
+      break;
+    case "cmp":
+      exprColumns(pred.left, out);
+      exprColumns(pred.right, out);
+      break;
+  }
+}
+
 function checkPred(
   pred: Predicate,
   columns: ColumnMeta[],
@@ -179,6 +209,10 @@ function checkStage(
     case "expectCount":
     case "expectUnique":
       break;
+    case "whenExpect":
+      checkPred(stage.when, columns, params, diagnostics, paramNames);
+      checkPred(stage.expect, columns, params, diagnostics, paramNames);
+      break;
   }
 }
 
@@ -205,6 +239,25 @@ export function typecheck(
         message: `Unknown column '${uniqueStage.column}'`,
         range: uniqueStage.span,
       });
+    }
+  }
+  const whenStage = query.stages.find((s) => s.kind === "whenExpect");
+  if (whenStage?.kind === "whenExpect") {
+    const selectStage = query.stages.find((s) => s.kind === "select");
+    if (selectStage?.kind === "select") {
+      const names = new Set<string>();
+      predColumns(whenStage.when, names);
+      predColumns(whenStage.expect, names);
+      for (const name of names) {
+        if (!selectStage.columns.includes(name)) {
+          diagnostics.push({
+            code: "unknown-column",
+            severity: "error",
+            message: `Unknown column '${name}'`,
+            range: whenStage.span,
+          });
+        }
+      }
     }
   }
   for (const name of paramNames) {

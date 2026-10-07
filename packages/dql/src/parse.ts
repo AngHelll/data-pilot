@@ -19,7 +19,7 @@ export class ParseError extends Error {
   }
 }
 
-const UNSUPPORTED = new Set(["sort", "group", "duplicates", "when"]);
+const UNSUPPORTED = new Set(["sort", "group", "duplicates"]);
 
 class Parser {
   private i = 0;
@@ -102,6 +102,7 @@ class Parser {
     if (kw === "take") return this.parseTake();
     if (kw === "count") return this.parseCount();
     if (kw === "expect") return this.parseExpect();
+    if (kw === "when") return this.parseWhenExpect();
     throw new ParseError(`Unknown stage '${t.value}'`, t.span);
   }
 
@@ -220,6 +221,26 @@ class Parser {
       kind: "expectCount",
       count,
       span: { start: startTok.span.start, end: nTok.span.end },
+    };
+  }
+
+  private parseWhenExpect(): Stage {
+    const startTok = this.expectIdent("when");
+    const when = this.parseOr();
+    const expectTok = this.peek();
+    if (expectTok.kind !== "ident" || expectTok.value.toLowerCase() !== "expect") {
+      throw new ParseError(
+        `when requires expect, got '${expectTok.value || expectTok.kind}'`,
+        expectTok.span,
+      );
+    }
+    this.advance();
+    const expectPred = this.parseOr();
+    return {
+      kind: "whenExpect",
+      when,
+      expect: expectPred,
+      span: { start: startTok.span.start, end: expectPred.span.end },
     };
   }
 
@@ -479,7 +500,11 @@ function validatePipeline(stages: Stage[]): void {
       phase = "tail";
       continue;
     }
-    if (stage.kind === "expectCount" || stage.kind === "expectUnique") {
+    if (
+      stage.kind === "expectCount" ||
+      stage.kind === "expectUnique" ||
+      stage.kind === "whenExpect"
+    ) {
       if (seenExpect || seenCount) {
         throw new ParseError(
           "Invalid pipeline: expect must be terminal and cannot follow count",
