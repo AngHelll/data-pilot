@@ -1,9 +1,14 @@
 # Data Pilot
 
-VS Code extension + bundled engine for exploring test datasets (CSV/JSONL) without loading everything into memory.
+Extensión VS Code + motor empaquetado para explorar datasets de prueba (CSV/JSONL) **sin cargar todo en memoria**. Proyecto independiente; plan y ADRs en `docs/`.
 
-**Phase 0:** scaffolding, ADRs, closed [DQL 0.1 spec](./docs/DQL-SPEC.md), spikes.  
-**Phase 1–2 (current):** bounded CSV/JSONL ingest + preview sessions, and headless DQL 0.1 against the streaming engine (child-process IPC included).
+| Fase | Estado |
+|------|--------|
+| 0 | Scaffolding, ADRs, [DQL 0.1 spec](./docs/DQL-SPEC.md), spikes |
+| 1–2 | Preview CSV/JSONL + DQL 0.1 headless (motor streaming + IPC proceso hijo) |
+| 3+ | UI VS Code, edición fixtures, VSIX piloto |
+
+**Checkout local recomendado (Mac):** `~/workspace/repos/data-pilot` — ver [SETUP-MAC.md](./docs/SETUP-MAC.md) si clonaste una carpeta `tmp-…` de Cursor.
 
 ## Requirements
 
@@ -18,12 +23,13 @@ End users of the installed extension do **not** need a separate Node install —
 ## Quick start
 
 ```bash
-git clone <repo-url> data-pilot
-cd data-pilot
-npm install
-npm run build
-npm test
+# Cuando exista GitHub (p. ej. AngHelll/data-pilot):
+git clone git@github.com:AngHelll/data-pilot.git ~/workspace/repos/data-pilot
+cd ~/workspace/repos/data-pilot
+npm install && npm run build && npm test
 ```
+
+Si ya tienes un clone en `~/tmp-23fca949cfc9bbb8`, sigue [docs/SETUP-MAC.md](./docs/SETUP-MAC.md) para moverlo.
 
 ### Preview a dataset (Phase 1)
 
