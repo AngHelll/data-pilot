@@ -177,6 +177,7 @@ function checkStage(
     case "take":
     case "count":
     case "expectCount":
+    case "expectUnique":
       break;
   }
 }
@@ -190,6 +191,21 @@ export function typecheck(
   const paramNames = new Set<string>();
   for (const stage of query.stages) {
     checkStage(stage, columns, params, diagnostics, paramNames);
+  }
+  const uniqueStage = query.stages.find((s) => s.kind === "expectUnique");
+  if (uniqueStage?.kind === "expectUnique") {
+    const known = columns.some((c) => c.name === uniqueStage.column);
+    const selectStage = query.stages.find((s) => s.kind === "select");
+    const inSelect =
+      selectStage?.kind === "select" && selectStage.columns.includes(uniqueStage.column);
+    if (!known || (selectStage && !inSelect)) {
+      diagnostics.push({
+        code: "unknown-column",
+        severity: "error",
+        message: `Unknown column '${uniqueStage.column}'`,
+        range: uniqueStage.span,
+      });
+    }
   }
   for (const name of paramNames) {
     if (params[name] === undefined) {

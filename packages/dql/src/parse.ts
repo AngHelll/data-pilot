@@ -101,7 +101,7 @@ class Parser {
     if (kw === "select") return this.parseSelect();
     if (kw === "take") return this.parseTake();
     if (kw === "count") return this.parseCount();
-    if (kw === "expect") return this.parseExpectCount();
+    if (kw === "expect") return this.parseExpect();
     throw new ParseError(`Unknown stage '${t.value}'`, t.span);
   }
 
@@ -176,9 +176,25 @@ class Parser {
     return { kind: "count", span: tok.span };
   }
 
-  private parseExpectCount(): Stage {
+  private parseExpect(): Stage {
     const startTok = this.expectIdent("expect");
     const next = this.peek();
+    if (next.kind === "ident" && next.value.toLowerCase() === "unique") {
+      this.advance();
+      const colTok = this.peek();
+      if (colTok.kind !== "ident") {
+        throw new ParseError(
+          `expect unique requires a column, got '${colTok.value || colTok.kind}'`,
+          colTok.span,
+        );
+      }
+      const column = this.parseColumnName();
+      return {
+        kind: "expectUnique",
+        column,
+        span: { start: startTok.span.start, end: colTok.span.end },
+      };
+    }
     if (next.kind !== "ident" || next.value.toLowerCase() !== "count") {
       throw new ParseError(
         `'expect' is not supported in DQL 0.1`,
@@ -463,10 +479,10 @@ function validatePipeline(stages: Stage[]): void {
       phase = "tail";
       continue;
     }
-    if (stage.kind === "expectCount") {
+    if (stage.kind === "expectCount" || stage.kind === "expectUnique") {
       if (seenExpect || seenCount) {
         throw new ParseError(
-          "Invalid pipeline: expect count must be terminal and cannot follow count",
+          "Invalid pipeline: expect must be terminal and cannot follow count",
           stage.span,
           "invalid-pipeline",
         );

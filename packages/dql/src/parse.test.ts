@@ -48,7 +48,7 @@ describe("DQL 0.1 parse", () => {
 
   it("rejects other expect forms, a count before expect, and a negative N", () => {
     assert.throws(
-      () => parseDql("expect unique"),
+      () => parseDql("expect nope"),
       (err: unknown) => err instanceof ParseError && err.code === "unsupported-operation",
     );
     assert.throws(
@@ -63,6 +63,25 @@ describe("DQL 0.1 parse", () => {
       () => parseDql("expect count = -1"),
       (err: unknown) => err instanceof ParseError && err.code === "parse-error",
     );
+  });
+
+  it("parses expect unique and formats it", () => {
+    const q = parseDql("expect unique country");
+    assert.equal(q.version, "0.1");
+    assert.equal(q.stages[0]?.kind, "expectUnique");
+    if (q.stages[0]?.kind === "expectUnique") assert.equal(q.stages[0].column, "country");
+    assert.equal(formatDql(q), "expect unique country");
+  });
+
+  it("rejects count before expect unique and an unknown unique column", () => {
+    assert.throws(
+      () => parseDql("count | expect unique id"),
+      (err: unknown) => err instanceof ParseError && err.code === "invalid-pipeline",
+    );
+    const result = analyzeDql("expect unique nope", [
+      { name: "id", inferredType: "string" },
+    ]);
+    assert.ok(result.diagnostics.some((d) => d.code === "unknown-column"));
   });
 
   it("rejects sort as unsupported", () => {

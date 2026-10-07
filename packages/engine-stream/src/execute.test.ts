@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -143,6 +145,96 @@ describe("DQL execute streaming", () => {
       {},
       { maxScanBytes: 1 },
       "t8",
+    );
+    assert.equal(result.rowCountReturned, 0);
+    assert.ok(
+      result.diagnostics.some(
+        (d) => d.code === "expect-failed" && d.message.includes("not exact"),
+      ),
+    );
+    store.close(handle.datasetId);
+  });
+
+  it("passes expect unique id and balance, and fails repeated country", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+
+    const id = analyzeDql("expect unique id", handle.columns);
+    const idResult = await executeDql(store, handle.datasetId, id.query!, {}, {}, "u1");
+    assert.equal(idResult.completion, "complete");
+    assert.ok(idResult.rowCountReturned > 1);
+    assert.equal(idResult.diagnostics.filter((d) => d.code === "expect-failed").length, 0);
+
+    const country = analyzeDql("expect unique country", handle.columns);
+    const countryResult = await executeDql(store, handle.datasetId, country.query!, {}, {}, "u2");
+    assert.equal(countryResult.rowCountReturned, 0);
+    assert.ok(
+      countryResult.diagnostics.some(
+        (d) => d.code === "expect-failed" && d.message.includes("MX"),
+      ),
+    );
+
+    const names = analyzeDql('where country = "MX" | expect unique name', handle.columns);
+    const namesResult = await executeDql(store, handle.datasetId, names.query!, {}, {}, "u3");
+    assert.equal(namesResult.completion, "complete");
+    assert.equal(namesResult.rowCountReturned, 2);
+
+    const balance = analyzeDql("expect unique balance", handle.columns);
+    const balanceResult = await executeDql(store, handle.datasetId, balance.query!, {}, {}, "u4");
+    assert.equal(balanceResult.completion, "complete");
+    assert.equal(balanceResult.diagnostics.filter((d) => d.code === "expect-failed").length, 0);
+
+    store.close(handle.datasetId);
+  });
+
+  it("lets repeated nulls pass and rejects repeated empty strings", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "expect-unique-"));
+    const nulls = path.join(dir, "nulls.csv");
+    const blanks = path.join(dir, "blanks.jsonl");
+    await fs.writeFile(nulls, "id,note\n1,\n2,\n", "utf8");
+    await fs.writeFile(blanks, '{"id":"1","note":""}\n{"id":"2","note":""}\n', "utf8");
+
+    const store = new DatasetStore();
+    const nullOpen = await store.open(nulls);
+    const nullAnalyzed = analyzeDql("expect unique note", nullOpen.handle.columns);
+    const nullResult = await executeDql(
+      store,
+      nullOpen.handle.datasetId,
+      nullAnalyzed.query!,
+      {},
+      {},
+      "u5",
+    );
+    assert.equal(nullResult.completion, "complete");
+    assert.equal(nullResult.diagnostics.filter((d) => d.code === "expect-failed").length, 0);
+    store.close(nullOpen.handle.datasetId);
+
+    const blankOpen = await store.open(blanks);
+    const blankAnalyzed = analyzeDql("expect unique note", blankOpen.handle.columns);
+    const blankResult = await executeDql(
+      store,
+      blankOpen.handle.datasetId,
+      blankAnalyzed.query!,
+      {},
+      {},
+      "u6",
+    );
+    assert.equal(blankResult.rowCountReturned, 0);
+    assert.ok(blankResult.diagnostics.some((d) => d.code === "expect-failed"));
+    store.close(blankOpen.handle.datasetId);
+  });
+
+  it("does not judge expect unique on a cut-short scan", async () => {
+    const store = new DatasetStore();
+    const { handle } = await store.open(tiny);
+    const analyzed = analyzeDql("expect unique country", handle.columns);
+    const result = await executeDql(
+      store,
+      handle.datasetId,
+      analyzed.query!,
+      {},
+      { maxScanBytes: 1 },
+      "u7",
     );
     assert.equal(result.rowCountReturned, 0);
     assert.ok(

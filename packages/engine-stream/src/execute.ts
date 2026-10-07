@@ -31,6 +31,12 @@ function not3(a: Tri): Tri {
   return !a;
 }
 
+function displayConcrete(v: DataValue): string {
+  if (v.kind === "string") return JSON.stringify(v.value);
+  if (v.kind === "null" || v.kind === "missing") return v.kind;
+  return String(v.value);
+}
+
 function compareNumeric(a: string, b: string): number {
   if (/^-?\d+$/.test(a) && /^-?\d+$/.test(b)) {
     const bi = BigInt(a) - BigInt(b);
@@ -288,10 +294,13 @@ export async function executeDql(
   const expectStage = query.stages.find((s) => s.kind === "expectCount") as
     | Extract<Stage, { kind: "expectCount" }>
     | undefined;
+  const expectUnique = query.stages.find((s) => s.kind === "expectUnique") as
+    | Extract<Stage, { kind: "expectUnique" }>
+    | undefined;
 
   const outColumns = selectStage?.columns ?? session.header;
   // Without take/count/expect, cap returned rows so open-ended queries stay bounded.
-  const counting = Boolean(countStage || expectStage);
+  const counting = Boolean(countStage || expectStage || expectUnique);
   const maxRows =
     takeStage?.count ??
     (counting ? undefined : (budget.maxRows ?? 200));
@@ -300,6 +309,8 @@ export async function executeDql(
   const started = Date.now();
 
   const outRows: DataValue[][] = [];
+  const seenUnique: DataValue[] = [];
+  let uniqueRepeat: DataValue | undefined;
   let matchCount = 0;
   let scannedRows = 0;
   let scannedBytes = 0;
@@ -340,6 +351,21 @@ export async function executeDql(
 
     if (countStage || expectStage) {
       if (expectStage && takeStage && matchCount >= takeStage.count) break;
+      continue;
+    }
+
+    if (expectUnique) {
+      const cell = map.get(expectUnique.column) ?? { kind: "missing" as const };
+      if (
+        uniqueRepeat === undefined &&
+        seenUnique.some((prev) => cmpValues("=", prev, cell) === true)
+      ) {
+        uniqueRepeat = cell;
+      } else if (!seenUnique.some((prev) => cmpValues("=", prev, cell) === true)) {
+        if (cell.kind !== "null" && cell.kind !== "missing") seenUnique.push(cell);
+      }
+      outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+      if (takeStage && outRows.length >= takeStage.count) break;
       continue;
     }
 
@@ -437,6 +463,65 @@ export async function executeDql(
       rows: [[integerValue(String(matchCount))]],
       rowCountReturned: 1,
       totalCount: matchCount,
+      completion: "complete",
+      scope: "full",
+      diagnostics,
+      scannedBytes,
+      scannedRows,
+    };
+  }
+
+  if (expectUnique) {
+    const completion = cancelled ? "cancelled" : truncated ? "truncated" : "complete";
+    if (completion !== "complete") {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: "expect unique is not exact because the scan did not finish",
+        range: expectUnique.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "prefix",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    if (uniqueRepeat) {
+      diagnostics.push({
+        code: "expect-failed",
+        severity: "error",
+        message: `expect unique ${expectUnique.column} failed: repeated ${displayConcrete(uniqueRepeat)}`,
+        range: expectUnique.span,
+      });
+      return {
+        requestId,
+        datasetId,
+        revisionId: session.handle.revision.revisionId,
+        columns: outColumns,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "full",
+        diagnostics,
+        scannedBytes,
+        scannedRows,
+      };
+    }
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: outColumns,
+      rows: outRows,
+      rowCountReturned: outRows.length,
       completion: "complete",
       scope: "full",
       diagnostics,

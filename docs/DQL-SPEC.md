@@ -6,7 +6,7 @@
 
 This is the canonical grammar/semantics contract for Data Pilot Query Language 0.1. Phase 2 implements a parser with AST and source spans against this spec.
 
-§4.6 `expect count = N` is accepted by the parser. Other `expect` forms are not.
+§4.6 `expect count = N` and §4.7 `expect unique` are accepted by the parser. Other `expect` forms are not.
 
 ---
 
@@ -27,9 +27,9 @@ This is the canonical grammar/semantics contract for Data Pilot Query Language 0
 
 ### Deferred (v0.2+)
 
-`sort`, grouping / aggregates beyond `count`, `duplicates`, `when…expect`, `expect … unique`, joins, window functions, arbitrary SQL/JS.
+`sort`, grouping / aggregates beyond `count`, `duplicates`, `when…expect`, joins, window functions, arbitrary SQL/JS.
 
-`expect count = N` is specified in §4.6. It is not a 0.1 parser feature.
+`expect count = N` (§4.6) and `expect unique` (§4.7) are accepted by the parser.
 
 Unsupported constructs MUST produce a clear `unsupported-operation` (or parse) diagnostic — never silent ignore.
 
@@ -124,6 +124,20 @@ Allowed order:
 ```
 
 At most one `expect count`. It is terminal: nothing may follow it. `count | expect count = N` is `invalid-pipeline` because `count` is already terminal. `expect count = N | where …` is `invalid-pipeline`.
+
+### `expect unique` pipeline (specified, parser later)
+
+```text
+expectUniqueStage := 'expect' 'unique' column
+```
+
+Allowed order:
+
+```text
+[find] → [where]* → [select]? → [take]? → expect unique column
+```
+
+At most one `expect unique`. It is terminal. It cannot share a pipeline with `count` or `expect count` (`invalid-pipeline`). If `select` is present, the column must be in that list.
 
 ---
 
@@ -226,7 +240,25 @@ The parser accepts this form. Any other `expect` form stays `unsupported-operati
 - When the exact count differs from `N`: diagnostic `expect-failed`, severity error. The message includes the actual count and `N`. This is not a successful result.
 - When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the count is not exact. The stage does not pass and does not compare the partial count as if it were exact.
 - Formatter SHOULD emit the canonical spacing `expect count = 2`.
-- `expect unique`, `when … expect`, and any other `expect` form stay deferred and MUST produce `unsupported-operation`, never a silent ignore.
+- `when … expect`, and any `expect` form other than §4.6 and §4.7, stay deferred and MUST produce `unsupported-operation`, never a silent ignore.
+
+### 4.7 `expect unique` (contract only)
+
+```text
+expectUniqueStage := 'expect' 'unique' column
+```
+
+The parser accepts this form. `when … expect` and any other `expect` form stay `unsupported-operation`.
+
+- Terminal. Inspects the rows the upstream pipeline would emit, including a preceding `take`. If `select` is present, the named column must appear in that list.
+- Unknown column: `unknown-column`, not `expect-failed`.
+- Passes only when the scan is exact (`completion === "complete"`) and no two concrete values in that column are equal. No error diagnostic. The result remains those rows; it is not replaced by a count.
+- Two concrete values that compare equal under §5.3 (integer and decimal promote): diagnostic `expect-failed`, severity error. The message names the column and the repeated value. This is not a successful result.
+- **Null does not collide.** Several `null` cells do not fail uniqueness. `null` does not collide with a concrete value.
+- **Missing does not collide.** Several `missing` cells do not fail. `missing` does not collide with `null` or with a concrete value.
+- An empty string `""` is a concrete value. Two `""` cells fail. A CSV empty numeric cell tagged `null` (Dani’s `balance` in `fixtures/sample/tiny.csv`) is not `""`.
+- When the scan is not exact (cancelled or truncated): diagnostic `expect-failed`, severity error. The message says the result is not exact. Uniqueness of the prefix is not judged.
+- Formatter SHOULD emit `expect unique country`.
 
 ---
 
@@ -319,7 +351,16 @@ find "MX" | where balance > $min | take 10
 where country = "MX" | expect count = 2
 ```
 
-On `fixtures/sample/tiny.csv` the query above matches Ada and Cam (2 rows). `where country = "MX" | expect count = 1` on that same file fails with `expect-failed` once a parser implements §4.6. Until then the 0.1 parser rejects the stage.
+On `fixtures/sample/tiny.csv` the query above matches Ada and Cam (2 rows). `where country = "MX" | expect count = 1` on that same file fails with `expect-failed`.
+
+```dql
+expect unique id
+expect unique country
+where country = "MX" | expect unique name
+expect unique balance
+```
+
+On that same file: `expect unique id` passes; `expect unique country` fails because `MX` is on Ada and Cam; `where country = "MX" | expect unique name` passes (Ada, Cam); `expect unique balance` passes (one `null`, Dani, and distinct concrete balances).
 
 ---
 
@@ -333,7 +374,7 @@ On `fixtures/sample/tiny.csv` the query above matches Ada and Cam (2 rows). `whe
 | `type-mismatch` | known illegal comparison |
 | `unsupported-operation` | v0.2+ feature used |
 | `invalid-pipeline` | illegal stage order/combination |
-| `expect-failed` | `expect count = N` (§4.6): exact count ≠ `N`, or the scan is not exact |
+| `expect-failed` | `expect count = N` (§4.6): exact count ≠ `N`, or the scan is not exact. `expect unique` (§4.7): a repeated concrete value, or the scan is not exact |
 
 Each diagnostic follows the shared `Diagnostic` contract (`code`, `severity`, `message`, optional `range`).
 
@@ -355,6 +396,5 @@ These remain product questions; defaults above are sufficient to implement:
 
 - CSV null-token list and persistence (settings vs sidecar) — plan §7 #11  
 - Saved-query file location — plan §7 #15  
-- `expect … unique` null/missing policy — v0.2 only  
 
 **Phase 0 gate:** critical syntax/semantics in §§2–6 and pipeline rules in §3 are **closed**.
