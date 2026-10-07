@@ -1,0 +1,74 @@
+{
+  "measuredAt": "2026-10-07T08:54:07.561Z",
+  "platform": "linux-x64",
+  "node": "v24.21.0",
+  "execPath": "/home/ubuntu/.nvm/versions/node/v24.21.0/bin/node",
+  "trials": {
+    "startup": {
+      "min": 53.366810000000044,
+      "max": 60.75149899999998,
+      "mean": 56.48961420000002,
+      "p50": 55.546876999999995,
+      "unit": "ms",
+      "samples": [
+        60.75,
+        55.55,
+        55.25,
+        53.37,
+        57.53
+      ],
+      "notes": "includes tsx import of worker TS"
+    },
+    "ipcPing": {
+      "min": 0.036728999999979806,
+      "max": 1.563853999999992,
+      "mean": 0.14720704999999726,
+      "p50": 0.055545999999992546,
+      "unit": "ms",
+      "samples": [
+        1.564,
+        0.185,
+        0.129,
+        0.116,
+        0.077,
+        0.068,
+        0.052,
+        0.059,
+        0.072,
+        0.16,
+        0.094,
+        0.047,
+        0.041,
+        0.043,
+        0.039,
+        0.037,
+        0.038,
+        0.038,
+        0.039,
+        0.046
+      ]
+    },
+    "baselineRssMb": 64.43,
+    "cancel": {
+      "cancelled": true,
+      "elapsedMs": 50.92,
+      "notes": "cooperative cancel via cancelJob while preview sleeping"
+    },
+    "killRecover": {
+      "killRecovered": true,
+      "recoverStartupMs": 53.9,
+      "crashRecovered": true,
+      "crashRecoverStartupMs": 54.97,
+      "rssKillRecovered": true,
+      "peakRssMb": 80
+    }
+  },
+  "conclusions": [
+    "Child process isolation is viable for Phase 0: host can kill and recover after RSS pressure and abrupt exit.",
+    "IPC newline-JSON ping RTT is low enough for interactive preview control messages.",
+    "Startup cost under tsx+TS is higher than a compiled JS worker; package the compiled dist/engine-worker.js in the VSIX.",
+    "Do not build a second (worker-thread) runtime unless a later spike shows clear latency/memory wins (D-001).",
+    "User-facing launch without separate Node remains to be smoke-tested inside VS Code ≥1.101 (open follow-up)."
+  ],
+  "execNote": "process.execPath=/home/ubuntu/.nvm/versions/node/v24.21.0/bin/node\nprocess.version=v24.21.0\nExtension host should spawn with process.execPath (Electron Node) so users need no separate Node install.\nThis spike runs under the Dev Node binary; VS Code ≥1.101 ships Node 22.15.1 — verify launch once under real Code."
+}

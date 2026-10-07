@@ -1,0 +1,91 @@
+{
+  "measuredAt": "2026-10-07T08:54:12.644Z",
+  "platform": "linux-x64",
+  "node": "v24.21.0",
+  "streaming": {
+    "small": {
+      "label": "csv-1k",
+      "sizeMb": 0.02,
+      "preview": {
+        "ms": 1.61,
+        "rows": 200,
+        "bytesRead": 4226,
+        "truncated": true,
+        "rssDeltaMb": 0,
+        "rssMb": 144.59
+      },
+      "filterTake": {
+        "ms": 0.67,
+        "scanned": 50,
+        "taken": 50,
+        "rssMb": 144.59
+      },
+      "countCancel": {
+        "cancelled": false,
+        "linesBeforeCancel": 1001
+      },
+      "countFull": {
+        "ms": 0.51,
+        "lines": 1001,
+        "rssMb": 144.71
+      }
+    },
+    "medium": {
+      "label": "csv-100mb",
+      "sizeMb": 100,
+      "preview": {
+        "ms": 0.48,
+        "rows": 200,
+        "bytesRead": 14080,
+        "truncated": true,
+        "rssDeltaMb": 0.13,
+        "rssMb": 144.84
+      },
+      "filterTake": {
+        "ms": 0.46,
+        "scanned": 246,
+        "taken": 50,
+        "rssMb": 144.96
+      },
+      "countCancel": {
+        "cancelled": true,
+        "linesBeforeCancel": 171108
+      },
+      "countFull": {
+        "ms": 202.24,
+        "lines": 1339912,
+        "rssMb": 148.11
+      }
+    }
+  },
+  "duckdb": {
+    "attemptedInstall": false,
+    "available": false,
+    "vsixBudgetMiB": 50,
+    "notes": [
+      "DuckDB remains a candidate (D-002); streaming is the default path for v0.1.",
+      "DuckDB and @duckdb/node-* clients are MIT — notices required if pulled in.",
+      "Native binaries are per-platform; VSIX must use platform-specific packaging.",
+      "@duckdb/node-api latest=1.5.6-r.1 license=MIT unpackedSize≈0.62 MiB (JS package only; native addon separate / platform-specific).",
+      "Estimate (not installed here): DuckDB Node bindings + linux-x64 native often land in the tens of MiB per platform; risk of exceeding ≤50 MiB VSIX meta without careful packaging.",
+      "Recommendation: keep streaming as v0.1 default; re-evaluate DuckDB in Phase 6 with a platform-specific VSIX size measurement before merging the dep."
+    ],
+    "license": "MIT"
+  },
+  "vsix": {
+    "goalMiBPerPlatform": 50,
+    "workspaceFootprint": {
+      "sourceBytes": 21206700,
+      "sourceMiB": 20.22,
+      "note": "Workspace bytes including installed deps if present; not a packed VSIX. Streaming-only VSIX expected well under 50 MiB."
+    },
+    "streamingOnlyEstimate": "≪ 50 MiB (TS/JS + CSV parser deps; no natives)",
+    "withDuckDbRisk": "Likely to approach or exceed 50 MiB/platform once native binaries are included — must measure per-platform VSIX before adopting."
+  },
+  "conclusions": [
+    "Streaming preview of ~100 MiB CSV stays memory-bounded (delta RSS small vs file size) because reads are incremental.",
+    "filter+take can stop early without a full scan; count requires a full pass (cancel works cooperatively).",
+    "DuckDB stays a candidate under MIT with license notices; packaging risk vs ≤50 MiB VSIX is the main open gate — do not hard-depend yet.",
+    "v0.1 default engine: streaming. Analytics/DuckDB deferred until Phase 6 evidence + measured VSIX."
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@data-pilot/runtime-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "spike": "tsx src/spike-child-process.ts",
+    "engine-worker": "tsx src/engine-worker.ts"
+  },
+  "dependencies": {
+    "@data-pilot/contracts": "0.0.0"
+  }
+}

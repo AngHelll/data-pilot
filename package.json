@@ -1,0 +1,33 @@
+{
+  "name": "data-pilot",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Data Pilot — VS Code extension + bundled engine for exploring test datasets without loading everything.",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "npm@10.9.7",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "spike:child-process": "npm run spike -w @data-pilot/runtime-node",
+    "spike:engine": "npm run spike:engine -w @data-pilot/engine-stream",
+    "extension:compile": "npm run compile -w data-pilot-vscode",
+    "extension:package": "npm run package -w data-pilot-vscode"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "tsx": "^4.19.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true,
+    "@vscode/vsce-sign@2.1.0": true
+  }
+}
