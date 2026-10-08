@@ -1,9 +1,11 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { analyzeDql } from "@data-pilot/dql";
 import type { ColumnMeta, Diagnostic, InferredType, SavedQuery } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
 import {
   chooseDatasetPath,
+  chooseResultPlacement,
   fileName,
   runOnChoices,
   runTargetActionText,
@@ -16,6 +18,9 @@ import { workspaceTrustMode } from "./engine-host";
 import { formatCells } from "./format-cell";
 import {
   activeDatasetEditorSession,
+  openEditorForResult,
+  openEditorPaths,
+  paintOpenEditorResult,
   type DatasetQuerySurface,
 } from "./webview/dataset-panel";
 import { savedQueryLink } from "./saved-query-tree";
@@ -120,14 +125,29 @@ export function registerDqlEditor(
       });
       refresh(editor.document);
       const result = await engine.executeQuery(opened.handle.datasetId, dql);
-      results.show(generation, {
+      if (generation !== runGeneration) return;
+      const payload = {
         datasetPath,
         columns: result.columns,
         rows: formatCells(result.rows),
         rowCountReturned: result.rowCountReturned,
         completion: result.completion,
         diagnostics: result.diagnostics.map((item) => item.message),
+      };
+      const resolved = path.resolve(datasetPath);
+      const placement = chooseResultPlacement({
+        besidePanelOpen: results.isOpen(),
+        datasetPath: resolved,
+        openEditorPaths: openEditorPaths(),
       });
+      if (placement === "update-open-panel") {
+        const status = results.updateOpen(generation, payload);
+        if (status !== "closed") return;
+      } else {
+        results.noteResult(generation, payload);
+      }
+      if (paintOpenEditorResult(datasetPath, result)) return;
+      await openEditorForResult(datasetPath, result);
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "message" in err
@@ -201,6 +221,11 @@ export function registerDqlEditor(
     }),
     vscode.commands.registerCommand("dataPilot.runDql", () => runActive(false)),
     vscode.commands.registerCommand("dataPilot.runDqlOn", () => runActive(true)),
+    vscode.commands.registerCommand("dataPilot.openDqlResultBeside", () => {
+      if (!results.openBeside()) {
+        void vscode.window.showInformationMessage("Run a query first, then open the result beside.");
+      }
+    }),
     vscode.commands.registerCommand("dataPilot.openSavedQuery", (query: SavedQuery | undefined) => {
       if (!query || typeof query.dql !== "string") return;
       return openSavedQuery(query, links);

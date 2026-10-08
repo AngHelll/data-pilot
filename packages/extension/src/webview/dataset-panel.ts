@@ -94,11 +94,13 @@ function editorPanelHtml(
   <link rel="stylesheet" href="${escapeHtml(String(styleUri))}" />
 </head>
 <body data-layout="editor">
-  <header class="editor-head">
-    <h1 id="title">Data Pilot</h1>
+  <header class="editor-head" id="editor-head">
+    <div class="editor-title-row">
+      <h1 id="title">Data Pilot</h1>
+      <button id="run" type="button">Run query</button>
+    </div>
     <p class="hint" id="loading">Loading dataset…</p>
     <p class="meta" id="editor-format"></p>
-    <p class="meta" id="meta"></p>
     <div id="trust"></div>
     <div class="row-actions" id="stale-row" hidden>
       <span class="warn" id="stale-banner"></span>
@@ -107,6 +109,7 @@ function editorPanelHtml(
   </header>
   <details>
     <summary>Schema</summary>
+    <p class="meta" id="meta"></p>
     <section id="describe-section">
       <p class="hint" id="describe-meta"></p>
       <div class="table-wrap schema-wrap">
@@ -121,24 +124,19 @@ function editorPanelHtml(
     <ul class="diag" id="ingest-diagnostics"></ul>
     <p class="hint" id="ingest-empty">No warnings in the bounded preview sample.</p>
   </details>
-  <section>
-    <label for="dql">DQL 0.1</label>
+  <details id="query-details">
+    <summary id="query-summary">Query</summary>
     <textarea id="dql" placeholder='where country = "MX" | take 20'></textarea>
     <div class="row-actions">
-      <button id="plan" type="button">Check query</button>
-      <button id="run" type="button">Run query</button>
-      <button id="save-query" type="button" disabled>Save query</button>
-      <button id="export-query" type="button" disabled>Export result</button>
-      <button id="cancel" type="button" disabled>Cancel</button>
-    </div>
-    <div class="row-actions">
-      <label class="saved-label" for="saved-queries">Saved</label>
-      <select id="saved-queries" disabled><option value="">— load saved query —</option></select>
+      <button id="plan" class="quiet" type="button">Check query</button>
+      <button id="save-query" class="quiet" type="button" disabled>Save query</button>
+      <button id="export-query" class="quiet" type="button" disabled>Export result</button>
+      <button id="cancel" class="quiet" type="button" disabled>Cancel</button>
     </div>
     <ul class="diag" id="dql-diagnostics"></ul>
     <p class="hint" id="dql-formatted"></p>
     <p class="cost" id="cost"></p>
-  </section>
+  </details>
   <div class="editor-tabs">
     <div class="tab-bar" role="tablist">
       <button type="button" class="tab" id="tab-data" role="tab" aria-selected="true" aria-controls="panel-data">Data</button>
@@ -416,6 +414,9 @@ export function ensureDatasetViewSession(
 
 const panelSubscriptions = new WeakMap<vscode.WebviewPanel, vscode.Disposable>();
 
+const editorSessions = new Set<DatasetViewSession>();
+const pendingExternalResult = new Map<string, QueryResult>();
+
 class DatasetViewSession {
   private readonly nonce: string;
   private currentFilePath: string | undefined;
@@ -433,6 +434,7 @@ class DatasetViewSession {
   private undelivered: { message: HostToWebviewMessage; attempts: number }[] = [];
   private undeliveredTimer: ReturnType<typeof setTimeout> | undefined;
   private loadGeneration = 0;
+  private loadInFlight = false;
   private lastSessionPayload:
     | Extract<HostToWebviewMessage, { type: "session" }>
     | undefined;
@@ -443,6 +445,7 @@ class DatasetViewSession {
     private readonly options: MountDatasetViewOptions,
   ) {
     this.nonce = createWebviewNonce();
+    if ((options.layout ?? "explorer") === "editor") editorSessions.add(this);
     this.surface.webview.options = {
       enableScripts: true,
       localResourceRoots: [options.extensionUri],
@@ -496,6 +499,7 @@ class DatasetViewSession {
   }
 
   dispose(): void {
+    editorSessions.delete(this);
     this.setEditorActive(false);
     for (const waiter of this.dqlWaiters.values()) clearTimeout(waiter.timer);
     this.dqlWaiters.clear();
@@ -681,6 +685,7 @@ class DatasetViewSession {
     token?: vscode.CancellationToken,
   ): Promise<boolean> {
     const generation = ++this.loadGeneration;
+    this.loadInFlight = true;
     logInfo(`Open dataset requested: ${filePath} (gen=${generation})`);
     try {
       const session = await this.engine.openDataset(filePath);
@@ -703,6 +708,7 @@ class DatasetViewSession {
         ),
         preview: serializeGrid("preview", session.preview, session.handle.columns),
       });
+      this.consumePendingResult(filePath);
       return true;
     } catch (err) {
       const message =
@@ -712,8 +718,33 @@ class DatasetViewSession {
       this.post({ type: "error", message });
       logError(`Open dataset failed: ${message}`);
       void vscode.window.showErrorMessage(`Data Pilot: ${message}`);
+      if (generation === this.loadGeneration) {
+        pendingExternalResult.delete(path.resolve(filePath));
+      }
       return false;
+    } finally {
+      if (generation === this.loadGeneration) this.loadInFlight = false;
     }
+  }
+
+  isReadyForExternalResult(): boolean {
+    return this.currentFilePath !== undefined && !this.loadInFlight;
+  }
+
+  paintExternalResult(result: QueryResult): void {
+    this.post({
+      type: "queryResult",
+      result: serializeGrid("query", result, this.columns),
+      diagnostics: result.diagnostics,
+    });
+  }
+
+  private consumePendingResult(filePath: string): void {
+    const key = path.resolve(filePath);
+    const result = pendingExternalResult.get(key);
+    if (!result) return;
+    pendingExternalResult.delete(key);
+    this.paintExternalResult(result);
   }
 
   private async onWebviewMessage(raw: unknown): Promise<void> {
@@ -1016,6 +1047,59 @@ class DatasetViewSession {
         this.post({ type: "queryState", running: false });
       }
     }
+  }
+}
+
+function editorFor(filePath: string): DatasetViewSession | undefined {
+  const key = path.resolve(filePath);
+  for (const session of editorSessions) {
+    const current = session.datasetPath();
+    if (current && path.resolve(current) === key) return session;
+  }
+  return undefined;
+}
+
+/** Resolved paths of dataset editors that already have a file open. */
+export function openEditorPaths(): string[] {
+  const paths: string[] = [];
+  for (const session of editorSessions) {
+    const filePath = session.datasetPath();
+    if (filePath) paths.push(path.resolve(filePath));
+  }
+  return paths;
+}
+
+/** Paint Result on the open editor for this path. False when that editor is not ready. */
+export function paintOpenEditorResult(filePath: string, result: QueryResult): boolean {
+  const session = editorFor(filePath);
+  if (!session?.isReadyForExternalResult()) return false;
+  session.paintExternalResult(result);
+  return true;
+}
+
+/** Open the dataset editor and paint Result after its preview session is posted. */
+export async function openEditorForResult(filePath: string, result: QueryResult): Promise<void> {
+  const key = path.resolve(filePath);
+  const existing = editorFor(filePath);
+  if (existing?.isReadyForExternalResult()) {
+    existing.paintExternalResult(result);
+    return;
+  }
+  pendingExternalResult.set(key, result);
+  try {
+    await vscode.commands.executeCommand(
+      "vscode.openWith",
+      vscode.Uri.file(filePath),
+      DATA_PILOT_VIEW_TYPE,
+    );
+  } catch (err) {
+    if (pendingExternalResult.get(key) === result) pendingExternalResult.delete(key);
+    throw err;
+  }
+  const session = editorFor(filePath);
+  if (session?.isReadyForExternalResult() && pendingExternalResult.get(key) === result) {
+    pendingExternalResult.delete(key);
+    session.paintExternalResult(result);
   }
 }
 

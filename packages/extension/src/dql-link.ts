@@ -61,6 +61,23 @@ export function runOnChoices(
   return out;
 }
 
+export type ResultPlacement = "update-open-panel" | "paint-open-editor" | "open-editor";
+
+/**
+ * One Run, one surface. An open beside panel wins.
+ * Otherwise paint the editor of this path, or open that editor.
+ * Another open editor is not a destination.
+ */
+export function chooseResultPlacement(input: {
+  besidePanelOpen: boolean;
+  datasetPath: string;
+  openEditorPaths: readonly string[];
+}): ResultPlacement {
+  if (input.besidePanelOpen) return "update-open-panel";
+  if (input.openEditorPaths.includes(input.datasetPath)) return "paint-open-editor";
+  return "open-editor";
+}
+
 export function chooseDatasetPath(
   link: DqlDocumentLink | undefined,
   _openPaths: readonly string[],

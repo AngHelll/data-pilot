@@ -513,14 +513,23 @@
       els.applyEdit.disabled = !on;
     }
 
+    function syncQuerySummary() {
+      const summary = document.getElementById("query-summary");
+      if (!summary || !els.dql) return;
+      const single = els.dql.value.replace(/\s+/g, " ").trim();
+      const line = single.length > 80 ? single.slice(0, 79) + "…" : single;
+      text(summary, line || "Query");
+    }
+
     function syncQueryActionButtons() {
       els.saveQuery.disabled = !canExecuteQuery;
       els.exportQuery.disabled = !canExport;
-      els.savedQueries.disabled = !canExecuteQuery;
+      if (els.savedQueries) els.savedQueries.disabled = !canExecuteQuery;
     }
 
     function renderSavedQueries(queries) {
       savedQueries = queries || [];
+      if (!els.savedQueries) return;
       els.savedQueries.replaceChildren();
       const placeholder = document.createElement("option");
       placeholder.value = "";
@@ -583,7 +592,10 @@
       });
     }
 
-    els.dql.addEventListener("input", () => schedulePlan());
+    els.dql.addEventListener("input", () => {
+      syncQuerySummary();
+      schedulePlan();
+    });
 
     els.plan.addEventListener("click", () => {
       if (!canExecuteQuery) return;
@@ -614,12 +626,14 @@
       vscode.postMessage({ type: "exportQuery", dql, format: "same-as-source" });
     });
 
-    els.savedQueries.addEventListener("change", () => {
-      const v = els.savedQueries.value;
-      if (!v) return;
-      vscode.postMessage({ type: "loadSavedQuery", savedAtMs: Number(v) });
-      els.savedQueries.value = "";
-    });
+    if (els.savedQueries) {
+      els.savedQueries.addEventListener("change", () => {
+        const v = els.savedQueries.value;
+        if (!v) return;
+        vscode.postMessage({ type: "loadSavedQuery", savedAtMs: Number(v) });
+        els.savedQueries.value = "";
+      });
+    }
 
     const inspectorToggle = document.getElementById("inspector-toggle");
     if (inspectorToggle) {
@@ -758,6 +772,7 @@
       }
       if (msg.type === "queryLoaded") {
         els.dql.value = msg.dql;
+        syncQuerySummary();
         schedulePlan();
         return;
       }
@@ -806,10 +821,12 @@
           clearStale();
           const h = msg.handle;
           const titleEl = document.getElementById("title");
+          const head = document.getElementById("editor-head");
           if (titleEl && h.revision && h.revision.path) {
             text(titleEl, h.revision.path.split(/[/\\]/).pop() || "Dataset");
           }
-          if (h.revision && h.revision.path) {
+          if (head && h.revision && h.revision.path) head.title = h.revision.path;
+          if (els.meta && h.revision && h.revision.path) {
             text(els.meta, h.revision.path);
           }
           renderDescribe(msg.describe);

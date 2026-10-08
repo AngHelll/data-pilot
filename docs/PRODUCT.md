@@ -14,6 +14,8 @@ VS Code extension (VSIX). Engine and DQL are independent of VS Code so CLI / CI 
 
 ## Human flow for v0.1
 
+This flow is the phase 5 close. The current workspace is phase 7.
+
 1. Open a dataset (CSV/JSONL) → metadata + bounded preview  
 2. See suggested types and parse warnings  
 3. Filter via UI or DQL (`where country = "MX"`, `where balance > 50000`)  
@@ -41,8 +43,8 @@ Untrusted workspaces: **limited** read-only preview (explicit open, metadata, pr
 
 ## Out of scope for v0.1
 
-Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages. The phase 7 workspace layout in [UX-TARGET.md](./UX-TARGET.md) is also out of this flow: v0.1 stays a text editor plus the Explorer panel.
+Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages. The v0.1 close (phase 5) stayed a text editor plus the Explorer panel. That sentence describes the close, not the current workspace. The phase 7 layout in [UX-TARGET.md](./UX-TARGET.md) is the current surface (specs 1–13 verified on the branch).
 
 ## Interface destination (phase 7)
 
-[UX-TARGET.md](./UX-TARGET.md) is the agreed interface, scheduled as phase 7 in [ARCHITECTURE.md](./ARCHITECTURE.md): after this v0.1 close and phase 6 packaging/language work, before CLI/agents. Phases 0–6 keep DQL `where`, trust, budgets, and preview-diff apply so phase 7 can move those capabilities. They do not start the Activity Bar, the central dataset editor, or a native `.dql` editor.
+[UX-TARGET.md](./UX-TARGET.md) is the agreed interface. Phase 7 is the current workspace in [ARCHITECTURE.md](./ARCHITECTURE.md): the Activity Bar, the central dataset editor, and the native `.dql` editor are verified (specs 1–13). Phases 0–6 kept DQL `where`, trust, budgets, and preview-diff apply, and did not open that layout. Phase 8 (CLI / agents) is another verified surface. This branch is not a release: it is not on `main`, and it has no tag or published version.

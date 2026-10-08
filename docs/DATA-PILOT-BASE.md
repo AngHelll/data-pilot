@@ -21,4 +21,4 @@ This file anchors implementation to the product architecture roadmap.
 
 One phase per turn. Phase 0 gate must pass before Phase 1 ingest work.
 
-Phase 7 is the interface destination ([UX-TARGET.md](./UX-TARGET.md)). Phases 0–6 do not implement it. They keep the `where` stage, the Explorer v0.1 path, host-written edits, and a single child process so phase 7 can relocate those capabilities without a second dialect or a second engine.
+Phases 0–6 did not implement the phase 7 layout ([UX-TARGET.md](./UX-TARGET.md)). They kept the `where` stage, the Explorer v0.1 path, host-written edits, and a single child process so phase 7 could relocate those capabilities without a second dialect or a second engine. The current surface is phase 7 (specs 1–13).

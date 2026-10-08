@@ -11,36 +11,54 @@ export interface DqlResultPayload {
   diagnostics: string[];
 }
 
-/** Read-only run output. A late response does not replace a newer run. */
+export type ResultPanelUpdate = "updated" | "stale" | "closed";
+
+/** Read-only run output. A late response does not replace a newer run. Run does not create this panel. */
 export class DqlResultView implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private generation = 0;
   private ready = false;
   private pending: DqlResultPayload | undefined;
+  private lastPayload: DqlResultPayload | undefined;
   private shownPath: string | undefined;
   private nextPath: string | undefined;
   private readonly nonce = createWebviewNonce();
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
-  show(generation: number, payload: DqlResultPayload): void {
-    if (generation < this.generation) return;
+  isOpen(): boolean {
+    return this.panel !== undefined;
+  }
+
+  /** Remember the newest result. Does not open a panel. */
+  noteResult(generation: number, payload: DqlResultPayload): boolean {
+    if (generation < this.generation) return false;
     this.generation = generation;
+    this.lastPayload = payload;
     this.shownPath = payload.datasetPath;
-    const panel = this.ensurePanel();
+    return true;
+  }
+
+  /** Update the panel already open, in the column it occupies. */
+  updateOpen(generation: number, payload: DqlResultPayload): ResultPanelUpdate {
+    if (!this.noteResult(generation, payload)) return "stale";
+    if (!this.panel) return "closed";
+    this.applyTitle(this.panel);
+    if (this.panel.viewColumn !== undefined) {
+      this.panel.reveal(this.panel.viewColumn, true);
+    }
+    this.postPayload(this.panel, payload);
+    return "updated";
+  }
+
+  /** Explicit action. Shows the last painted result beside. Does not execute. */
+  openBeside(): boolean {
+    if (!this.lastPayload) return false;
+    const panel = this.ensurePanel(vscode.ViewColumn.Beside);
     this.applyTitle(panel);
     panel.reveal(vscode.ViewColumn.Beside, true);
-    const message = {
-      type: "result",
-      generation,
-      payload,
-      targetText: resultTargetText(this.shownPath, this.nextPath ?? payload.datasetPath),
-    };
-    if (!this.ready) {
-      this.pending = payload;
-      return;
-    }
-    void panel.webview.postMessage(message);
+    this.postPayload(panel, this.lastPayload);
+    return true;
   }
 
   /** The query now in front. Does not open the result view. */
@@ -59,13 +77,27 @@ export class DqlResultView implements vscode.Disposable {
     this.panel = undefined;
   }
 
-  private ensurePanel(): vscode.WebviewPanel {
+  private postPayload(panel: vscode.WebviewPanel, payload: DqlResultPayload): void {
+    const message = {
+      type: "result",
+      generation: this.generation,
+      payload,
+      targetText: resultTargetText(this.shownPath, this.nextPath ?? payload.datasetPath),
+    };
+    if (!this.ready) {
+      this.pending = payload;
+      return;
+    }
+    void panel.webview.postMessage(message);
+  }
+
+  private ensurePanel(viewColumn: vscode.ViewColumn): vscode.WebviewPanel {
     if (this.panel) return this.panel;
     this.ready = false;
     const panel = vscode.window.createWebviewPanel(
       "dataPilot.dqlResult",
       "DQL result",
-      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+      { viewColumn, preserveFocus: true },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [this.extensionUri] },
     );
     panel.onDidDispose(() => {

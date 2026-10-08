@@ -24,6 +24,7 @@
     "onCommand:dataPilot.openQueryInEditor",
     "onCommand:dataPilot.runDql",
     "onCommand:dataPilot.runDqlOn",
+    "onCommand:dataPilot.openDqlResultBeside",
     "onCustomEditor:dataPilot.dataset"
   ],
   "main": "./out/extension.js",
@@ -73,6 +74,10 @@
       {
         "command": "dataPilot.runDqlOn",
         "title": "Data Pilot: Run on Dataset…"
+      },
+      {
+        "command": "dataPilot.openDqlResultBeside",
+        "title": "Data Pilot: Open Result Beside"
       },
       {
         "command": "dataPilot.showDqlTarget",
@@ -175,6 +180,11 @@
           "command": "dataPilot.runDqlOn",
           "when": "editorLangId == data-pilot-dql",
           "group": "navigation@1"
+        },
+        {
+          "command": "dataPilot.openDqlResultBeside",
+          "when": "editorLangId == data-pilot-dql",
+          "group": "navigation@2"
         }
       ]
     },

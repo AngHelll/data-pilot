@@ -2,9 +2,9 @@
 
 **Fecha:** 7 de octubre de 2026  
 **Versión:** 0.1  
-**Estado:** dirección de diseño acordada; implementación y momento de integración sujetos a revisión del repo.
+**Estado:** dirección de diseño acordada. Las specs 1–13 de la fase 7 están verificadas en la rama. La sección 2 es la captura anterior a ese workspace.
 
-Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos ni afirma que se hayan completado sus fases. No existe `docs/ROADMAP.md`: el turno de este diseño es la **fase 7**, después de las fases 5 y 6 y antes de CLI/agentes (fase 8+).
+Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos. No existe `docs/ROADMAP.md`. El turno de este diseño es la **fase 7**, que ya es la superficie actual del workspace. Las fases 5 y 6 son el cierre v0.1 y el empaquetado anteriores. La fase 8 (CLI/agentes) es una superficie aparte ya verificada.
 
 ## 1. Decisión que conservamos
 
@@ -18,7 +18,7 @@ No se introducen dos dialectos para acomodar la UI. La captura actual usa `where
 
 ## 2. Qué aprendimos de la captura actual
 
-La vista lateral concentra schema, consulta, botones, resultados, inspector y edición. El editor central muestra CSV como texto. Esta distribución consume ancho para controles y deja la tabla en la zona más estrecha.
+Esta sección describe la captura anterior a la fase 7. La vista lateral concentra schema, consulta, botones, resultados, inspector y edición. El editor central muestra CSV como texto. Esta distribución consume ancho para controles y deja la tabla en la zona más estrecha.
 
 La captura permite evaluar distribución y funciones visibles. No permite confirmar calidad del core, cobertura, separación de responsabilidades ni fase terminada. La evaluación de reutilización requiere leer el repo.
 
@@ -165,6 +165,8 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 - La spec 9 está verificada: Data, Result y Compare son pestañas del editor para que la tabla del archivo siga a la vista.
 - La spec 10 está verificada: Profile muestra hechos de la muestra de describe, no un scan del archivo. Jobs, el LSP y asociar `*.csv` siguen fuera.
 - La spec 11 está verificada: Apply save no escribe si el archivo cambió después de la lectura del hijo. Sin lock. El bin y MCP no se reabren. Jobs, el LSP, asociar `*.csv`, `sort` y una fase 9 siguen fuera.
-- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique.
+- La spec 12 está verificada: un Run del editor `.dql` actualiza el panel de resultado si ya está abierto, o la pestaña Result del dataset enlazado. Ejecutar no abre una columna. Abrir el resultado al lado es un comando explícito.
+- La spec 13 está verificada: la cabecera queda en el nombre y el formato. La consulta nace cerrada y Run sigue visible. La barra de pestañas permanece a la vista y no usa el fondo del botón Run. Un solo panel está abierto.
+- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Los puntos de arriba son la superficie verificada.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

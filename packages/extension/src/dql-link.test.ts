@@ -2,11 +2,47 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   chooseDatasetPath,
+  chooseResultPlacement,
   resultTargetText,
   runOnChoices,
   runTargetActionText,
   runTargetText,
 } from "./dql-link.js";
+
+test("chooseResultPlacement reuses one surface and ignores another editor", () => {
+  assert.equal(
+    chooseResultPlacement({
+      besidePanelOpen: true,
+      datasetPath: "/data/tiny.csv",
+      openEditorPaths: ["/data/tiny.csv"],
+    }),
+    "update-open-panel",
+  );
+  assert.equal(
+    chooseResultPlacement({
+      besidePanelOpen: false,
+      datasetPath: "/data/tiny.csv",
+      openEditorPaths: ["/data/tiny.csv"],
+    }),
+    "paint-open-editor",
+  );
+  assert.equal(
+    chooseResultPlacement({
+      besidePanelOpen: false,
+      datasetPath: "/data/tiny.csv",
+      openEditorPaths: [],
+    }),
+    "open-editor",
+  );
+  assert.equal(
+    chooseResultPlacement({
+      besidePanelOpen: false,
+      datasetPath: "/data/tiny.csv",
+      openEditorPaths: ["/data/other.csv"],
+    }),
+    "open-editor",
+  );
+});
 
 test("chooseDatasetPath does not pick the first open session", () => {
   assert.equal(chooseDatasetPath(undefined, ["/data/a.csv", "/data/b.csv"]), undefined);
