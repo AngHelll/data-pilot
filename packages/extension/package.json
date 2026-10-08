@@ -2,7 +2,7 @@
   "name": "data-pilot-vscode",
   "displayName": "Data Pilot",
   "description": "Find, understand, and prepare test datasets without loading everything into memory.",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "publisher": "data-pilot",
   "engines": {
@@ -20,6 +20,7 @@
     "onView:dataPilot.datasets",
     "onView:dataPilot.savedQueries",
     "onCommand:dataPilot.openSavedQuery",
+    "onCommand:dataPilot.associateSavedQuery",
     "onLanguage:data-pilot-dql",
     "onCommand:dataPilot.openQueryInEditor",
     "onCommand:dataPilot.runDql",
@@ -86,6 +87,10 @@
       {
         "command": "dataPilot.openSavedQuery",
         "title": "Data Pilot: Open Saved Query"
+      },
+      {
+        "command": "dataPilot.associateSavedQuery",
+        "title": "Data Pilot: Associate with open dataset"
       }
     ],
     "languages": [
@@ -185,6 +190,13 @@
           "command": "dataPilot.openDqlResultBeside",
           "when": "editorLangId == data-pilot-dql",
           "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dataPilot.associateSavedQuery",
+          "when": "view == dataPilot.savedQueries && viewItem == savedQuery.noDataset",
+          "group": "navigation@1"
         }
       ]
     },

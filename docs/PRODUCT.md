@@ -1,6 +1,6 @@
 # Data Pilot — Product
 
-**Status:** Phase 7 — apply save snapshot (verified)  
+**Status:** Phase 7 — specs 1–18 verified (tag v0.2.0)  
 **Author:** Ángel Jiménez Ríos  
 **Plan:** Context `docs/data-pilot-plan.md` (project store) · decisions D-001…D-006
 
@@ -43,8 +43,8 @@ Untrusted workspaces: **limited** read-only preview (explicit open, metadata, pr
 
 ## Out of scope for v0.1
 
-Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages. The v0.1 close (phase 5) stayed a text editor plus the Explorer panel. That sentence describes the close, not the current workspace. The phase 7 layout in [UX-TARGET.md](./UX-TARGET.md) is the current surface (specs 1–13 verified on the branch).
+Full 50 GB support, business-rule inference, VS Code web, joins, .NET SDK, inventing confidence percentages. The v0.1 close (phase 5) stayed a text editor plus the Explorer panel. That sentence describes the close, not the current workspace. The phase 7 layout in [UX-TARGET.md](./UX-TARGET.md) is the current surface (specs 1–18 verified).
 
 ## Interface destination (phase 7)
 
-[UX-TARGET.md](./UX-TARGET.md) is the agreed interface. Phase 7 is the current workspace in [ARCHITECTURE.md](./ARCHITECTURE.md): the Activity Bar, the central dataset editor, and the native `.dql` editor are verified (specs 1–13). Phases 0–6 kept DQL `where`, trust, budgets, and preview-diff apply, and did not open that layout. Phase 8 (CLI / agents) is another verified surface. This branch is not a release: it is not on `main`, and it has no tag or published version.
+[UX-TARGET.md](./UX-TARGET.md) is the agreed interface. Phase 7 is the current workspace in [ARCHITECTURE.md](./ARCHITECTURE.md): the Activity Bar, the central dataset editor, and the native `.dql` editor are verified (specs 1–18). Phases 0–6 kept DQL `where`, trust, budgets, and preview-diff apply, and did not open that layout. Phase 8 (CLI / agents) is another verified surface. Tag `v0.2.0` publishes this branch. It is not on `main`. The name v0.1 stays the phase 5 close.

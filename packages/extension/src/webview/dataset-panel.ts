@@ -213,7 +213,7 @@ function editorPanelHtml(
   </section>
     </div>
   </div>
-  <section id="inspector">
+  <section id="inspector" hidden>
     <div class="row-actions">
       <label>Inspector</label>
       <button id="inspector-toggle" type="button">Hide inspector</button>

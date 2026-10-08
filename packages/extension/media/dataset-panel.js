@@ -14,6 +14,8 @@
     let planTimer = null;
     let inspectRaw = "";
     let lastGrid = null;
+    let lastResult = null;
+    let editorTab = "data";
     const hiddenColumns = new Set();
     const columnWidths = new Map();
 
@@ -331,13 +333,47 @@
         profile: els.tabProfile,
       };
       if (!panels[name]) return;
+      editorTab = name;
       for (const key of Object.keys(panels)) {
         if (panels[key]) panels[key].hidden = key !== name;
         if (tabs[key]) tabs[key].setAttribute("aria-selected", key === name ? "true" : "false");
       }
+      syncInspector();
+      syncEditorFooter();
+    }
+
+    function syncInspector() {
+      const inspector = document.getElementById("inspector");
+      if (!inspector) return;
+      inspector.hidden = editorTab !== "data" || !selectedPos;
+    }
+
+    function syncEditorFooter() {
+      const footer = document.getElementById("editor-footer");
+      if (!footer) return;
+      if (editorTab === "data" && lastGrid) {
+        text(footer, previewFooter(lastGrid));
+        return;
+      }
+      if (editorTab === "result" && lastResult) {
+        text(footer, resultLine(lastResult));
+        return;
+      }
+      text(footer, "");
+    }
+
+    function previewFooter(grid) {
+      const foot = ["Preview", grid.rowCountReturned + " rows", grid.completion];
+      if (grid.totalCount !== undefined) foot.push("total " + grid.totalCount);
+      return foot.join(" · ");
+    }
+
+    function resultLine(grid) {
+      return "Result · " + grid.rowCountReturned + " rows · " + grid.completion;
     }
 
     function clearResult() {
+      lastResult = null;
       if (els.resultEmpty) els.resultEmpty.hidden = false;
       if (!els.result) return;
       els.result.hidden = true;
@@ -346,9 +382,11 @@
       const tbody = els.resultGrid && els.resultGrid.querySelector("tbody");
       if (thead) thead.replaceChildren();
       if (tbody) tbody.replaceChildren();
+      syncEditorFooter();
     }
 
     function renderResult(grid) {
+      lastResult = grid;
       if (!els.result || !els.resultGrid) return;
       if (els.resultEmpty) els.resultEmpty.hidden = true;
       els.result.hidden = false;
@@ -379,9 +417,8 @@
         });
         tbody.appendChild(tr);
       });
-      if (els.resultFooter) {
-        text(els.resultFooter, grid.rowCountReturned + " rows · " + grid.completion);
-      }
+      if (els.resultFooter) text(els.resultFooter, resultLine(grid));
+      syncEditorFooter();
     }
 
     function renderGrid(grid) {
@@ -462,6 +499,7 @@
       syncFilterColumns(grid.columns);
       syncColumnPicker(grid.columns);
       const parts = [
+        "Preview",
         grid.rowCountReturned + " rows shown",
         "completion: " + grid.completion,
         "scope: " + grid.scope,
@@ -469,12 +507,8 @@
       if (grid.totalCount !== undefined) parts.push("total: " + grid.totalCount);
       if (grid.scannedBytes !== undefined) parts.push("scanned ~" + grid.scannedBytes + " B");
       text(els.cost, parts.join(" · "));
-      const footer = document.getElementById("editor-footer");
-      if (footer) {
-        const foot = [grid.rowCountReturned + " rows", grid.completion];
-        if (grid.totalCount !== undefined) foot.push("total " + grid.totalCount);
-        text(footer, foot.join(" · "));
-      }
+      syncInspector();
+      syncEditorFooter();
     }
 
     function formatBytes(n) {
@@ -483,15 +517,18 @@
       return (n / 1024).toFixed(1) + " KiB";
     }
 
+    function editorFileCount(preview) {
+      if (!preview) return "sample · total unknown";
+      if (preview.totalCount !== undefined) return preview.totalCount + " rows";
+      if (preview.completion === "complete") return preview.rowCountReturned + " rows";
+      return "sample · total unknown";
+    }
+
     function renderEditorSummary(handle, preview) {
       const formatEl = document.getElementById("editor-format");
       if (!formatEl || !handle) return;
-      const count =
-        preview && preview.totalCount !== undefined
-          ? preview.totalCount + " rows"
-          : "sample · total unknown";
       const size = handle.revision ? formatBytes(handle.revision.sizeBytes) : "";
-      text(formatEl, [handle.format, size, count].filter(Boolean).join(" · "));
+      text(formatEl, [handle.format, size, editorFileCount(preview)].filter(Boolean).join(" · "));
     }
 
     function selectCell(rowIndex, column, display, td) {
@@ -504,6 +541,7 @@
       els.editValue.value = display === "null" || display === "·" ? "" : display;
       text(els.inspectDetail, "Loading…");
       text(els.editDiff, "");
+      syncInspector();
       vscode.postMessage({ type: "inspectCell", rowIndex, column });
     }
 
@@ -835,6 +873,7 @@
           text(els.dqlFormatted, "");
           text(els.editDiff, "");
           selected = null;
+          selectedPos = null;
           inspectRaw = "";
           renderEditorSummary(h, msg.preview);
           renderGrid(msg.preview);

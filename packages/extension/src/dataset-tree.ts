@@ -1,5 +1,5 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
+import { datasetTreePresentation } from "./dataset-tree-presentation";
 import type { OpenDatasetSession } from "./dataset-sessions";
 import type { ExtensionEngineHost } from "./engine-host";
 
@@ -23,13 +23,11 @@ export class DatasetTreeProvider
   }
 
   getTreeItem(session: OpenDatasetSession): vscode.TreeItem {
-    const item = new vscode.TreeItem(
-      path.basename(session.filePath),
-      vscode.TreeItemCollapsibleState.None,
-    );
+    const shown = datasetTreePresentation(session.filePath, session.datasetId);
+    const item = new vscode.TreeItem(shown.label, vscode.TreeItemCollapsibleState.None);
     item.id = session.datasetId;
-    item.description = session.datasetId;
-    item.tooltip = `${session.filePath}\n${session.datasetId}`;
+    if (shown.description) item.description = shown.description;
+    item.tooltip = shown.tooltip;
     item.iconPath = new vscode.ThemeIcon("table");
     item.command = {
       command: "dataPilot.openDatasetCustomEditor",

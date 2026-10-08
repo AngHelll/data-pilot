@@ -139,7 +139,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   );
 
-  registerDqlEditor(context, engine);
+  registerDqlEditor(context, engine, savedQueryStore);
 
   context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd);
   context.subscriptions.push({

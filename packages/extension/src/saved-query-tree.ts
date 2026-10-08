@@ -4,9 +4,28 @@ import { fileName, type DqlDocumentLink } from "./dql-link";
 export const MAX_SAVED_QUERIES = 50;
 const LABEL_LIMIT = 80;
 
-/** Newest first, capped. Entries without datasetPath stay as they are. */
+/** Newest first, capped. The same dql and datasetPath replace earlier rows. */
 export function nextSavedQueries(existing: readonly SavedQuery[], query: SavedQuery): SavedQuery[] {
-  return [query, ...existing].slice(0, MAX_SAVED_QUERIES);
+  const rest = existing.filter((row) => !sameQueryTarget(row, query));
+  return [query, ...rest].slice(0, MAX_SAVED_QUERIES);
+}
+
+/** Point one saved row at a dataset. Does not fill other rows that lack a path. */
+export function associateSavedQuery(
+  existing: readonly SavedQuery[],
+  query: SavedQuery,
+  datasetPath: string,
+): SavedQuery[] {
+  const rest = existing.filter((row) => !sameSavedRow(row, query));
+  return nextSavedQueries(rest, rememberDatasetPath(query, datasetPath));
+}
+
+function sameQueryTarget(row: SavedQuery, query: SavedQuery): boolean {
+  return row.dql === query.dql && row.datasetPath === query.datasetPath;
+}
+
+function sameSavedRow(row: SavedQuery, query: SavedQuery): boolean {
+  return sameQueryTarget(row, query) && row.savedAtMs === query.savedAtMs;
 }
 
 /** Attach the path of this save. No path leaves the query unchanged. */

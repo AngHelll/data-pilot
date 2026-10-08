@@ -27,6 +27,7 @@ export class SavedQueryTreeProvider
     const item = new vscode.TreeItem(text.label, vscode.TreeItemCollapsibleState.None);
     item.id = `${query.savedAtMs}:${query.datasetPath ?? ""}:${query.dql}`;
     item.description = text.description;
+    if (!query.datasetPath) item.contextValue = "savedQuery.noDataset";
     item.tooltip = text.tooltip;
     item.iconPath = new vscode.ThemeIcon("search");
     item.command = {

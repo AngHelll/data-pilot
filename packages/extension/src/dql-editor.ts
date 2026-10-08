@@ -24,6 +24,7 @@ import {
   type DatasetQuerySurface,
 } from "./webview/dataset-panel";
 import { savedQueryLink } from "./saved-query-tree";
+import { SavedQueryStore } from "./saved-query-store";
 
 const LINK_KEY = "dataPilot.dqlLinks.v1";
 const LANGUAGE_ID = "data-pilot-dql";
@@ -31,6 +32,7 @@ const LANGUAGE_ID = "data-pilot-dql";
 export function registerDqlEditor(
   context: vscode.ExtensionContext,
   engine: ExtensionEngineHost,
+  savedQueries: SavedQueryStore,
 ): void {
   const lenses = new vscode.EventEmitter<void>();
   const targetHub = { sync: () => undefined as void };
@@ -230,6 +232,27 @@ export function registerDqlEditor(
       if (!query || typeof query.dql !== "string") return;
       return openSavedQuery(query, links);
     }),
+    vscode.commands.registerCommand(
+      "dataPilot.associateSavedQuery",
+      async (query: SavedQuery | undefined) => {
+        if (!query || typeof query.dql !== "string" || query.datasetPath) return;
+        const sessions = engine.listOpenSessions();
+        if (sessions.length === 0) {
+          void vscode.window.showInformationMessage("Open a dataset first.");
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          sessions.map((session) => ({
+            label: fileName(session.filePath),
+            description: session.filePath,
+            path: session.filePath,
+          })),
+          { placeHolder: "Associate with open dataset" },
+        );
+        if (!picked) return;
+        savedQueries.associate(query, picked.path);
+      },
+    ),
   );
 
   for (const document of vscode.workspace.textDocuments) refresh(document);
