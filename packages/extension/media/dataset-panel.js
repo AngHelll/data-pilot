@@ -9,6 +9,7 @@
     let columnTypes = [];
     let selected = null;
     let planTimer = null;
+    let inspectRaw = "";
 
     const els = {
       loading: document.getElementById("loading"),
@@ -164,6 +165,29 @@
       if (grid.totalCount !== undefined) parts.push("total: " + grid.totalCount);
       if (grid.scannedBytes !== undefined) parts.push("scanned ~" + grid.scannedBytes + " B");
       text(els.cost, parts.join(" · "));
+      const footer = document.getElementById("editor-footer");
+      if (footer) {
+        const foot = [grid.rowCountReturned + " rows", grid.completion];
+        if (grid.totalCount !== undefined) foot.push("total " + grid.totalCount);
+        text(footer, foot.join(" · "));
+      }
+    }
+
+    function formatBytes(n) {
+      if (typeof n !== "number") return "";
+      if (n < 1024) return n + " B";
+      return (n / 1024).toFixed(1) + " KiB";
+    }
+
+    function renderEditorSummary(handle, preview) {
+      const formatEl = document.getElementById("editor-format");
+      if (!formatEl || !handle) return;
+      const count =
+        preview && preview.totalCount !== undefined
+          ? preview.totalCount + " rows"
+          : "sample · total unknown";
+      const size = handle.revision ? formatBytes(handle.revision.sizeBytes) : "";
+      text(formatEl, [handle.format, size, count].filter(Boolean).join(" · "));
     }
 
     function selectCell(rowIndex, column, display, td) {
@@ -244,6 +268,21 @@
       els.savedQueries.value = "";
     });
 
+    const inspectorToggle = document.getElementById("inspector-toggle");
+    if (inspectorToggle) {
+      inspectorToggle.addEventListener("click", () => {
+        const collapsed = document.body.classList.toggle("inspector-collapsed");
+        text(inspectorToggle, collapsed ? "Show inspector" : "Hide inspector");
+      });
+    }
+    const copyCell = document.getElementById("copy-cell");
+    if (copyCell) {
+      copyCell.addEventListener("click", () => {
+        if (!inspectRaw) return;
+        vscode.postMessage({ type: "copyText", text: inspectRaw });
+      });
+    }
+
     els.cancel.addEventListener("click", () => {
       vscode.postMessage({ type: "cancelQuery" });
     });
@@ -285,6 +324,14 @@
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (!msg || typeof msg.type !== "string") return;
+      if (msg.type === "requestDql") {
+        vscode.postMessage({
+          type: "reportDql",
+          requestId: msg.requestId,
+          dql: els.dql ? els.dql.value : "",
+        });
+        return;
+      }
       if (msg.type === "init") {
         sawInit = true;
         canExecuteQuery = !!msg.canExecuteQuery;
@@ -337,6 +384,7 @@
         return;
       }
       if (msg.type === "inspectResult") {
+        inspectRaw = typeof msg.raw === "string" ? msg.raw : JSON.stringify(msg.raw);
         text(
           els.inspectDetail,
           "#" + msg.rowIndex + " · " + msg.column + " · " + msg.inferredType +
@@ -386,6 +434,8 @@
           text(els.dqlFormatted, "");
           text(els.editDiff, "");
           selected = null;
+          inspectRaw = "";
+          renderEditorSummary(h, msg.preview);
           renderGrid(msg.preview);
         } catch (err) {
           if (els.loading) els.loading.hidden = false;

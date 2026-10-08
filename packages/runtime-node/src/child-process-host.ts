@@ -20,6 +20,8 @@ export interface HostOptions {
   /** Override executable; defaults to process.execPath (VS Code / Electron Node). */
   execPath?: string;
   env?: NodeJS.ProcessEnv;
+  /** Fires when the child exits, including a crash while the session is idle. */
+  onChildExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
 export interface RequestOptions {
@@ -141,6 +143,7 @@ export class ChildProcessHost {
       this.pending.clear();
       this.ready = false;
       this.child = null;
+      this.options.onChildExit?.(code, signal);
     });
 
     await readyPromise;

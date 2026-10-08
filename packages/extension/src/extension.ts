@@ -10,9 +10,11 @@ import {
   DATA_PILOT_EXPLORER_VIEW_ID,
   DatasetExplorerWebviewProvider,
 } from "./dataset-explorer-view";
-import { dataPilotLog, logInfo } from "./log";
+import { DatasetTreeProvider } from "./dataset-tree";
+import { registerDqlEditor } from "./dql-editor";
+import { dataPilotLog, logError, logInfo } from "./log";
 import { SavedQueryStore } from "./saved-query-store";
-import { isDatasetUri } from "./dataset-uri";
+import { datasetTabPaths, isDatasetUri } from "./dataset-uri";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -42,13 +44,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const explorerView = new DatasetExplorerWebviewProvider(context, engine, savedQueryStore);
+  const datasetsTree = new DatasetTreeProvider(engine);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(DATA_PILOT_EXPLORER_VIEW_ID, explorerView, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
+    vscode.window.registerTreeDataProvider("dataPilot.datasets", datasetsTree),
+    datasetsTree,
   );
 
+  const rememberOpenDatasetTabs = async (): Promise<void> => {
+    if (!engine) return;
+    const open = new Set(engine.listOpenSessions().map((session) => session.filePath));
+    const paths: string[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input;
+        if (input instanceof vscode.TabInputText) paths.push(input.uri.fsPath);
+      }
+    }
+    for (const filePath of datasetTabPaths(paths)) {
+      if (open.has(filePath)) continue;
+      try {
+        await engine.openDataset(filePath);
+        open.add(filePath);
+      } catch (err) {
+        logError(
+          `Could not list open dataset ${filePath}`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  };
+
   let syncEditorTimer: ReturnType<typeof setTimeout> | undefined;
+  let tabTimer: ReturnType<typeof setTimeout> | undefined;
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (!explorerView.hasSession()) return;
@@ -57,7 +87,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         explorerView.syncFromActiveEditor(editor);
       }, 300);
     }),
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      if (tabTimer) clearTimeout(tabTimer);
+      tabTimer = setTimeout(() => {
+        void rememberOpenDatasetTabs();
+      }, 300);
+    }),
   );
+  void rememberOpenDatasetTabs();
 
   const openFromUri = async (uri: vscode.Uri): Promise<void> => {
     if (!engine || !savedQueryStore) return;
@@ -125,6 +162,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await explorerView.loadDataset(uri.fsPath, { force: true });
     },
   );
+
+  registerDqlEditor(context, engine, () => explorerView.querySurface());
 
   context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd, refreshPreviewCmd);
   context.subscriptions.push({

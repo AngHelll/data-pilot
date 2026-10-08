@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -b --pretty false",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test src/**/*.test.ts src/*.test.ts",
     "spike": "tsx src/spike-child-process.ts",
     "engine-worker": "tsx src/engine-worker.ts"
   },

@@ -76,7 +76,8 @@ export type HostToWebviewMessage =
     }
   | { type: "queryState"; running: boolean }
   | { type: "error"; message: string }
-  | { type: "idle"; message: string };
+  | { type: "idle"; message: string }
+  | { type: "requestDql"; requestId: string };
 
 /** Webview → host (validated in panel handler). */
 export type WebviewToHostMessage =
@@ -89,6 +90,8 @@ export type WebviewToHostMessage =
   | { type: "webviewReady" }
   | { type: "cancelQuery" }
   | { type: "inspectCell"; rowIndex: number; column: string }
+  | { type: "copyText"; text: string }
+  | { type: "reportDql"; requestId: string; dql: string }
   | { type: "proposeEdit"; rowIndex: number; column: string; newRaw: string }
   | { type: "applyEdit"; rowIndex: number; column: string; newRaw: string };
 
@@ -167,6 +170,17 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
     case "inspectCell": {
       if (!validIndex(msg.rowIndex) || !validColumn(msg.column)) return null;
       return { type: "inspectCell", rowIndex: msg.rowIndex, column: msg.column };
+    }
+    case "copyText": {
+      if (typeof msg.text !== "string" || msg.text.length > MAX_CELL_LENGTH) return null;
+      return { type: "copyText", text: msg.text };
+    }
+    case "reportDql": {
+      if (typeof msg.requestId !== "string" || msg.requestId.length === 0 || msg.requestId.length > 80) {
+        return null;
+      }
+      if (typeof msg.dql !== "string" || msg.dql.length > MAX_DQL_LENGTH) return null;
+      return { type: "reportDql", requestId: msg.requestId, dql: msg.dql };
     }
     case "proposeEdit":
     case "applyEdit": {

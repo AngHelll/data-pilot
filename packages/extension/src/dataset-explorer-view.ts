@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { ExtensionEngineHost } from "./engine-host";
 import { isDatasetUri } from "./dataset-uri";
-import { ensureExplorerViewSession } from "./webview/dataset-panel";
+import { ensureExplorerViewSession, type DatasetQuerySurface } from "./webview/dataset-panel";
 import type { SavedQueryStore } from "./saved-query-store";
 
 /** Explorer sidebar webview — Rainbow CSV-style: keep the text editor, preview in the side panel. */
@@ -65,6 +65,11 @@ export class DatasetExplorerWebviewProvider implements vscode.WebviewViewProvide
 
   hasSession(): boolean {
     return this.session !== undefined;
+  }
+
+  /** The explorer surface, when its webview exists. */
+  querySurface(): DatasetQuerySurface | undefined {
+    return this.session;
   }
 
   async reveal(): Promise<void> {

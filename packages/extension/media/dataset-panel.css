@@ -63,3 +63,14 @@ input.cell-edit {
   padding: 4px 8px;
 }
 #inspect-detail { font-size: 0.9rem; margin-top: 4px; }
+body[data-layout="editor"] .editor-table { max-height: none; min-height: 240px; }
+body[data-layout="editor"] .editor-footer {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 0.85rem;
+}
+body[data-layout="editor"].inspector-collapsed #inspector-body { display: none; }
+body[data-layout="editor"] details { margin-top: 12px; }
+body[data-layout="editor"] summary { cursor: pointer; font-weight: 600; }
+body[data-layout="editor"] #inspector label { margin: 0; }

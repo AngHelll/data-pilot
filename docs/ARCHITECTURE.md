@@ -75,7 +75,7 @@ Definitions live in `@data-pilot/contracts`.
 | 4 | Safe fixture edit (diff preview + explicit host apply). Phase 7 keeps this path. |
 | 5 | v0.1 close / human eval on a text editor plus the Explorer panel. Does not open phase 7 surfaces. |
 | 6 | Analytics packaging, then expect/diff language contracts. No panel move and no second DQL dialect. |
-| 7 | UX workspace — [UX-TARGET.md](./UX-TARGET.md). Three specs, in order: (1) realign session ownership on the current surfaces; (2) Activity Bar, central table, inspector; (3) native DQL editor. Not started. |
-| 8+ | CLI / agents |
+| 7 | UX workspace — [UX-TARGET.md](./UX-TARGET.md). Three specs, in order: (1) session ownership on the current surfaces (verified); (2) Activity Bar, central table, inspector (verified); (3) native DQL editor (verified). |
+| 8+ | CLI / agents. Headless bin (verified). NDJSON session (verified). Local MCP stdio server for preview, describe, and query (verified). |
 
 Phases 0–6 are the baseline phase 7 consumes. They do not implement the target layout, do not associate `*.csv` by default, do not rename DQL, and do not add a second engine so a new panel can run alone. There is no `docs/ROADMAP.md`; this table is the order.

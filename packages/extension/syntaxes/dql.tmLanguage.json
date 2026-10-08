@@ -1,0 +1,32 @@
+{
+  "scopeName": "source.data-pilot-dql",
+  "name": "Data Pilot DQL",
+  "patterns": [
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#keyword" },
+    { "include": "#pipe" }
+  ],
+  "repository": {
+    "keyword": {
+      "match": "\\b(where|when|expect|take|count|select|find)\\b",
+      "name": "keyword.control.dql"
+    },
+    "pipe": {
+      "match": "\\|",
+      "name": "keyword.operator.pipe.dql"
+    },
+    "string": {
+      "name": "string.quoted.double.dql",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.dql" }
+      ]
+    },
+    "number": {
+      "match": "\\b\\d+(?:\\.\\d+)?\\b",
+      "name": "constant.numeric.dql"
+    }
+  }
+}

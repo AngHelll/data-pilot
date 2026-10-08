@@ -12,6 +12,7 @@ import {
 } from "@data-pilot/contracts";
 import { assertOpAllowed, type PlanResult, type SessionContext } from "@data-pilot/core";
 import { ChildProcessHost } from "@data-pilot/runtime-node";
+import { DatasetSessionRegistry, type OpenDatasetSession } from "./dataset-sessions";
 import { replaceOpenDatasetFile } from "./fixture-writer";
 import { logError, logInfo } from "./log";
 import type { SerializedEditPreview } from "./webview/messages";
@@ -36,7 +37,11 @@ function ipcError(response: IpcResponse): Diagnostic {
 
 export class ExtensionEngineHost {
   private host: ChildProcessHost | undefined;
-  private activeDatasetId: string | undefined;
+  private readonly sessions = new DatasetSessionRegistry();
+  private readonly openHandles = new Map<
+    string,
+    { handle: DatasetHandle; diagnostics: Diagnostic[] }
+  >();
   private activeQueryRequestId: string | undefined;
   private querySeq = 0;
   private trustListener: vscode.Disposable | undefined;
@@ -44,6 +49,15 @@ export class ExtensionEngineHost {
   private openDatasetChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly extensionContext: vscode.ExtensionContext) {}
+
+  /** Sessions already open in this window. The tree does not scan the workspace. */
+  listOpenSessions(): OpenDatasetSession[] {
+    return this.sessions.entries();
+  }
+
+  onSessionsChanged(listener: () => void): vscode.Disposable {
+    return new vscode.Disposable(this.sessions.onChange(listener));
+  }
 
   private workerEntry(): string {
     return this.extensionContext.asAbsolutePath(path.join("out", "engine-worker.js"));
@@ -72,7 +86,7 @@ export class ExtensionEngineHost {
   }
 
   private async restartForTrustChange(): Promise<void> {
-    const hadDataset = this.activeDatasetId !== undefined;
+    const hadDataset = this.sessions.idsToClose().length > 0;
     await this.stop();
     if (hadDataset) {
       void vscode.window.showInformationMessage(
@@ -118,12 +132,15 @@ export class ExtensionEngineHost {
       await this.host.cancel(this.activeQueryRequestId).catch(() => undefined);
     }
     this.activeQueryRequestId = undefined;
-    if (this.activeDatasetId && this.host) {
-      await this.host
-        .request("closeDataset", { datasetId: this.activeDatasetId }, { timeoutMs: 5000 })
-        .catch(() => undefined);
+    if (this.host) {
+      for (const datasetId of this.sessions.idsToClose()) {
+        await this.host
+          .request("closeDataset", { datasetId }, { timeoutMs: 5000 })
+          .catch(() => undefined);
+      }
     }
-    this.activeDatasetId = undefined;
+    this.sessions.clear();
+    this.openHandles.clear();
     await this.host?.stop();
     this.host = undefined;
   }
@@ -143,11 +160,21 @@ export class ExtensionEngineHost {
 
       const host = await this.ensureStarted();
 
-      if (this.activeDatasetId) {
-        await host
-          .request("closeDataset", { datasetId: this.activeDatasetId }, { timeoutMs: 5000 })
-          .catch(() => undefined);
-        this.activeDatasetId = undefined;
+      const existingId = this.sessions.lookup(filePath);
+      const cached = existingId ? this.openHandles.get(existingId) : undefined;
+      if (existingId && cached) {
+        logInfo(`IPC preview (reuse) → ${existingId}`);
+        const preview = await host.request(
+          "preview",
+          { datasetId: existingId },
+          { timeoutMs: 120_000 },
+        );
+        if (!preview.ok) throw ipcError(preview);
+        return {
+          handle: cached.handle,
+          diagnostics: cached.diagnostics,
+          preview: preview.result as QueryResult,
+        };
       }
 
       logInfo(`IPC openDataset → ${filePath}`);
@@ -162,7 +189,11 @@ export class ExtensionEngineHost {
         handle: DatasetHandle;
         diagnostics: Diagnostic[];
       };
-      this.activeDatasetId = opened.handle.datasetId;
+      this.sessions.remember(filePath, opened.handle.datasetId);
+      this.openHandles.set(opened.handle.datasetId, {
+        handle: opened.handle,
+        diagnostics: opened.diagnostics,
+      });
 
       logInfo(`IPC preview → ${opened.handle.datasetId}`);
       const preview = await host.request(
@@ -189,8 +220,8 @@ export class ExtensionEngineHost {
     return result;
   }
 
-  async refreshPreview(): Promise<QueryResult> {
-    if (!this.activeDatasetId) {
+  async refreshPreview(datasetId: string): Promise<QueryResult> {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -200,21 +231,21 @@ export class ExtensionEngineHost {
     const host = await this.ensureStarted();
     const preview = await host.request(
       "preview",
-      { datasetId: this.activeDatasetId },
+      { datasetId },
       { timeoutMs: 120_000 },
     );
     if (!preview.ok) throw ipcError(preview);
     return preview.result as QueryResult;
   }
 
-  async inspectCell(rowIndex: number, column: string): Promise<{
+  async inspectCell(datasetId: string, rowIndex: number, column: string): Promise<{
     display: string;
     raw: string;
     inferredType: string;
   }> {
     const blocked = assertOpAllowed(trustContext(), "inspectValue");
     if (blocked) throw blocked;
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -224,7 +255,7 @@ export class ExtensionEngineHost {
     const host = await this.ensureStarted();
     const response = await host.request(
       "inspectValue",
-      { datasetId: this.activeDatasetId, rowIndex, column },
+      { datasetId, rowIndex, column },
       { timeoutMs: 60_000 },
     );
     if (!response.ok) throw ipcError(response);
@@ -242,10 +273,10 @@ export class ExtensionEngineHost {
     return { display, raw: body.raw, inferredType: body.inferredType };
   }
 
-  async planQuery(dql: string): Promise<PlanResult> {
+  async planQuery(datasetId: string, dql: string): Promise<PlanResult> {
     const blocked = assertOpAllowed(trustContext(), "planQuery");
     if (blocked) return { diagnostics: [blocked] };
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       return {
         diagnostics: [
           {
@@ -259,7 +290,7 @@ export class ExtensionEngineHost {
     const host = await this.ensureStarted();
     const response = await host.request(
       "planQuery",
-      { datasetId: this.activeDatasetId, dql },
+      { datasetId, dql },
       { timeoutMs: 15_000 },
     );
     if (!response.ok) {
@@ -268,10 +299,10 @@ export class ExtensionEngineHost {
     return response.result as PlanResult;
   }
 
-  async executeQuery(dql: string): Promise<QueryResult> {
+  async executeQuery(datasetId: string, dql: string): Promise<QueryResult> {
     const blocked = assertOpAllowed(trustContext(), "executeQuery");
     if (blocked) throw blocked;
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -286,7 +317,7 @@ export class ExtensionEngineHost {
       const response = await host.requestWithId(
         requestId,
         "executeQuery",
-        { datasetId: this.activeDatasetId, dql, budget: { maxRows: 500 } },
+        { datasetId, dql, budget: { maxRows: 500 } },
         { timeoutMs: 120_000 },
       );
       if (!response.ok) throw ipcError(response);
@@ -302,6 +333,7 @@ export class ExtensionEngineHost {
   }
 
   async proposeEdit(
+    datasetId: string,
     rowIndex: number,
     column: string,
     newRaw: string,
@@ -315,7 +347,7 @@ export class ExtensionEngineHost {
     }
     const blocked = assertOpAllowed(trustContext(), "editFixture");
     if (blocked) throw blocked;
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -326,7 +358,7 @@ export class ExtensionEngineHost {
     const response = await host.request(
       "editFixture",
       {
-        datasetId: this.activeDatasetId,
+        datasetId,
         rowIndex,
         column,
         newRaw,
@@ -339,6 +371,7 @@ export class ExtensionEngineHost {
   }
 
   async applyEdit(
+    datasetId: string,
     rowIndex: number,
     column: string,
     newRaw: string,
@@ -356,14 +389,13 @@ export class ExtensionEngineHost {
     }
     const blocked = assertOpAllowed(trustContext(), "editFixture");
     if (blocked) throw blocked;
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
         message: "Open a dataset first",
       } satisfies Diagnostic;
     }
-    const datasetId = this.activeDatasetId;
     const host = await this.ensureStarted();
     const response = await host.request(
       "editFixture",
@@ -394,10 +426,10 @@ export class ExtensionEngineHost {
     return { written: true, path: result.path, editPreview };
   }
 
-  async saveQuery(dql: string): Promise<SavedQuery> {
+  async saveQuery(datasetId: string, dql: string): Promise<SavedQuery> {
     const blocked = assertOpAllowed(trustContext(), "saveQuery");
     if (blocked) throw blocked;
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -407,7 +439,7 @@ export class ExtensionEngineHost {
     const host = await this.ensureStarted();
     const response = await host.request(
       "saveQuery",
-      { datasetId: this.activeDatasetId, dql },
+      { datasetId, dql },
       { timeoutMs: 15_000 },
     );
     if (!response.ok) throw ipcError(response);
@@ -415,6 +447,7 @@ export class ExtensionEngineHost {
   }
 
   async exportQueryResult(
+    datasetId: string,
     dql: string,
     format: ExportFormat = "same-as-source",
   ): Promise<ExportArtifact> {
@@ -425,7 +458,7 @@ export class ExtensionEngineHost {
         message: "Export is disabled (trust workspace and dataPilot.allowExport)",
       } satisfies Diagnostic;
     }
-    if (!this.activeDatasetId) {
+    if (!datasetId) {
       throw {
         code: "no-dataset",
         severity: "error",
@@ -435,7 +468,7 @@ export class ExtensionEngineHost {
     const host = await this.ensureStarted();
     const response = await host.request(
       "exportResult",
-      { datasetId: this.activeDatasetId, dql, format },
+      { datasetId, dql, format },
       { timeoutMs: 120_000 },
     );
     if (!response.ok) throw ipcError(response);

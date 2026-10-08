@@ -18,6 +18,11 @@
     "onCommand:dataPilot.openDatasetResource",
     "onCommand:dataPilot.openDatasetCustomEditor",
     "onView:dataPilot.explorer",
+    "onView:dataPilot.datasets",
+    "onLanguage:data-pilot-dql",
+    "onCommand:dataPilot.openQueryInEditor",
+    "onCommand:dataPilot.runDql",
+    "onCommand:dataPilot.runDqlOn",
     "onCustomEditor:dataPilot.dataset"
   ],
   "main": "./out/extension.js",
@@ -59,8 +64,52 @@
         "command": "dataPilot.refreshExplorerPreview",
         "title": "Data Pilot: Refresh Preview",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dataPilot.openQueryInEditor",
+        "title": "Data Pilot: Open Query in Editor"
+      },
+      {
+        "command": "dataPilot.openExplorerQueryInEditor",
+        "title": "Data Pilot: Open Explorer Query in Editor"
+      },
+      {
+        "command": "dataPilot.runDql",
+        "title": "Data Pilot: Run Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dataPilot.runDqlOn",
+        "title": "Data Pilot: Run on Dataset…"
+      },
+      {
+        "command": "dataPilot.showDqlTarget",
+        "title": "Data Pilot: Show Query Dataset"
       }
     ],
+    "languages": [
+      {
+        "id": "data-pilot-dql",
+        "aliases": ["Data Pilot DQL", "DQL"],
+        "extensions": [".dql"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "data-pilot-dql",
+        "scopeName": "source.data-pilot-dql",
+        "path": "./syntaxes/dql.tmLanguage.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dataPilot",
+          "title": "Data Pilot",
+          "icon": "media/data-pilot.svg"
+        }
+      ]
+    },
     "views": {
       "explorer": [
         {
@@ -69,8 +118,20 @@
           "name": "Data Pilot",
           "when": "workspaceFolderCount != 0"
         }
+      ],
+      "dataPilot": [
+        {
+          "id": "dataPilot.datasets",
+          "name": "Datasets"
+        }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "dataPilot.datasets",
+        "contents": "No open datasets.\n[Open Dataset](command:dataPilot.openDataset)"
+      }
+    ],
     "customEditors": [
       {
         "viewType": "dataPilot.dataset",
@@ -108,6 +169,21 @@
           "command": "dataPilot.refreshExplorerPreview",
           "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
           "group": "navigation@1"
+        },
+        {
+          "command": "dataPilot.openQueryInEditor",
+          "when": "activeCustomEditorId == dataPilot.dataset",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dataPilot.runDql",
+          "when": "editorLangId == data-pilot-dql",
+          "group": "navigation@0"
+        },
+        {
+          "command": "dataPilot.runDqlOn",
+          "when": "editorLangId == data-pilot-dql",
+          "group": "navigation@1"
         }
       ],
       "view/title": [
@@ -115,6 +191,17 @@
           "command": "dataPilot.refreshExplorerPreview",
           "when": "view == dataPilot.explorer",
           "group": "navigation"
+        },
+        {
+          "command": "dataPilot.openExplorerQueryInEditor",
+          "when": "view == dataPilot.explorer",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dataPilot.openExplorerQueryInEditor",
+          "when": "false"
         }
       ]
     },
@@ -144,11 +231,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "watch": "node esbuild.mjs --watch",
     "package": "npm run compile && mkdir -p ../../tmp && npx @vscode/vsce package --no-dependencies --allow-missing-repository -o ../../tmp/data-pilot.vsix",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/**/*.test.ts src/*.test.ts"
   },
   "dependencies": {
     "@data-pilot/contracts": "0.0.0",
     "@data-pilot/core": "0.0.0",
+    "@data-pilot/dql": "0.0.0",
     "@data-pilot/runtime-node": "0.0.0"
   },
   "devDependencies": {

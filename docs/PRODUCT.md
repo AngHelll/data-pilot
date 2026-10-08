@@ -1,6 +1,6 @@
 # Data Pilot — Product
 
-**Status:** Phase 6 — key diff operation (verified)  
+**Status:** Phase 8 — local MCP (verified)  
 **Author:** Ángel Jiménez Ríos  
 **Plan:** Context `docs/data-pilot-plan.md` (project store) · decisions D-001…D-006
 

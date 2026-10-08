@@ -8,6 +8,7 @@ const packages = path.resolve(__dirname, "..");
 
 const alias = {
   "@data-pilot/contracts": path.join(packages, "contracts/src/index.ts"),
+  "@data-pilot/dql": path.join(packages, "dql/src/index.ts"),
   "@data-pilot/core": path.join(packages, "core/src/index.ts"),
   // Bundle host only — avoid pulling import.meta path helpers into the VSIX host.
   "@data-pilot/runtime-node": path.join(

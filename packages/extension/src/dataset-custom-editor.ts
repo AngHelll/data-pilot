@@ -50,6 +50,7 @@ export class DatasetCustomEditorProvider
       savedQueryStore: this.savedQueries,
       extensionUri: this.context.extensionUri,
       title,
+      layout: "editor",
     });
 
     await session.loadDataset(document.uri.fsPath, token);

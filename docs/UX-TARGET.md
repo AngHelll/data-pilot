@@ -154,9 +154,9 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 **Recomendación: B, con turno en la fase 7.** El diseño queda registrado. No se implementa dentro de las fases 5 ni 6.
 
 - El camino verificado de v0.1 sigue siendo texto + panel Explorer (`dataPilot.explorer`). El custom editor (`dataPilot.dataset`, prioridad `option`) es opcional y queda fuera de ese cierre.
-- `DatasetStore` ya guarda varias sesiones por `datasetId`. `ExtensionEngineHost` solo conserva `activeDatasetId` y cierra la anterior al abrir otra. La primera spec de la fase 7 realinea ese ownership sobre el Explorer y el custom editor actuales. La Activity Bar y la tabla central son la spec siguiente, no la misma.
+- `DatasetStore` guarda varias sesiones por `datasetId`. Las specs 1, 2 y 3 de la fase 7 están verificadas: ownership, Activity Bar con tabla central e inspector, y el editor DQL nativo.
 - No hay `CustomDocument` con save/undo/revert. La fase 7 conserva Preview diff + Apply save (escritura solo en el host), budgets, trust y DQL `where`.
-- El editor DQL nativo (`.dql`, `data-pilot-dql`) es el segundo corte de la fase 7, no el primero.
+- El editor DQL nativo (`.dql`, `data-pilot-dql`) es la spec 3 de la fase 7 y está verificada. El enlace al dataset es explícito.
 - Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

@@ -17,9 +17,10 @@
     "lint": "npm run lint --workspaces --if-present",
     "spike:child-process": "npm run spike -w @data-pilot/runtime-node",
     "spike:engine": "npm run spike:engine -w @data-pilot/engine-stream",
-    "preview": "tsx packages/core/src/cli.ts preview",
-    "query": "tsx packages/core/src/cli.ts query",
-    "describe": "tsx packages/core/src/cli.ts describe",
+    "data-pilot": "tsx packages/runtime-node/src/cli.ts",
+    "preview": "tsx packages/runtime-node/src/cli.ts preview",
+    "query": "tsx packages/runtime-node/src/cli.ts query",
+    "describe": "tsx packages/runtime-node/src/cli.ts describe",
     "extension:compile": "npm run compile -w data-pilot-vscode",
     "extension:package": "npm run package -w data-pilot-vscode"
   },

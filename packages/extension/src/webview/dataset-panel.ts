@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { Diagnostic, QueryResult, TrustMode } from "@data-pilot/contracts";
+import type { ColumnMeta, Diagnostic, QueryResult, TrustMode } from "@data-pilot/contracts";
 import { formatCells } from "../format-cell";
 import {
   type HostToWebviewMessage,
@@ -21,11 +21,15 @@ import { createWebviewNonce, isCspNonce } from "./nonce";
 /** VS Code custom editor view type — use with `vscode.openWith` and editor associations. */
 export const DATA_PILOT_VIEW_TYPE = "dataPilot.dataset";
 
+export type DatasetViewLayout = "explorer" | "editor";
+
 export interface MountDatasetViewOptions {
   engine: ExtensionEngineHost;
   savedQueryStore: SavedQueryStore;
   extensionUri: vscode.Uri;
   title: string;
+  /** Explorer keeps the side-panel page. The custom editor uses the wide table. */
+  layout?: DatasetViewLayout;
 }
 
 function serializeGrid(
@@ -55,12 +59,118 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function panelHtml(
+function editorPanelHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   nonce: string,
   title: string,
 ): string {
+  if (!isCspNonce(nonce)) {
+    throw new Error("Webview nonce is not a valid CSP nonce");
+  }
+  const styleUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "media", "dataset-panel.css"),
+  );
+  const scriptUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "media", "dataset-panel.js"),
+  );
+  const csp = [
+    "default-src 'none'",
+    `style-src ${webview.cspSource}`,
+    `script-src 'nonce-${nonce}'`,
+  ].join("; ");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <link rel="stylesheet" href="${escapeHtml(String(styleUri))}" />
+</head>
+<body data-layout="editor">
+  <header class="editor-head">
+    <h1 id="title">Data Pilot</h1>
+    <p class="hint" id="loading">Loading dataset…</p>
+    <p class="meta" id="editor-format"></p>
+    <p class="meta" id="meta"></p>
+    <div id="trust"></div>
+    <div class="row-actions" id="stale-row" hidden>
+      <span class="warn" id="stale-banner"></span>
+      <button id="reopen" type="button">Reopen dataset</button>
+    </div>
+  </header>
+  <details>
+    <summary>Schema</summary>
+    <section id="describe-section">
+      <p class="hint" id="describe-meta"></p>
+      <div class="table-wrap schema-wrap">
+        <table id="schema"><thead><tr>
+          <th>Column</th><th>Type</th><th>null (sample)</th><th>missing (sample)</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </details>
+  <details>
+    <summary>Parse warnings</summary>
+    <ul class="diag" id="ingest-diagnostics"></ul>
+    <p class="hint" id="ingest-empty">No warnings in the bounded preview sample.</p>
+  </details>
+  <section>
+    <label for="dql">DQL 0.1</label>
+    <textarea id="dql" placeholder='where country = "MX" | take 20'></textarea>
+    <div class="row-actions">
+      <button id="plan" type="button">Check query</button>
+      <button id="run" type="button">Run query</button>
+      <button id="save-query" type="button" disabled>Save query</button>
+      <button id="export-query" type="button" disabled>Export result</button>
+      <button id="cancel" type="button" disabled>Cancel</button>
+    </div>
+    <div class="row-actions">
+      <label class="saved-label" for="saved-queries">Saved</label>
+      <select id="saved-queries" disabled><option value="">— load saved query —</option></select>
+    </div>
+    <ul class="diag" id="dql-diagnostics"></ul>
+    <p class="hint" id="dql-formatted"></p>
+    <p class="cost" id="cost"></p>
+  </section>
+  <section>
+    <label id="grid-label">Preview</label>
+    <div class="table-wrap editor-table"><table id="grid"><thead></thead><tbody></tbody></table></div>
+  </section>
+  <section id="inspector">
+    <div class="row-actions">
+      <label>Inspector</label>
+      <button id="inspector-toggle" type="button">Hide inspector</button>
+      <button id="copy-cell" type="button">Copy raw</button>
+    </div>
+    <div id="inspector-body">
+      <p id="inspect-detail">Click a cell to inspect raw value and type.</p>
+      <div class="row-actions">
+        <input id="edit-value" class="cell-edit" type="text" placeholder="New raw value" disabled />
+        <button id="preview-edit" type="button" disabled>Preview diff</button>
+        <button id="apply-edit" type="button" disabled>Apply save</button>
+      </div>
+      <pre class="diff" id="edit-diff"></pre>
+    </div>
+  </section>
+  <p id="editor-footer" class="editor-footer"></p>
+  <script nonce="${escapeHtml(nonce)}" src="${escapeHtml(String(scriptUri))}"></script>
+</body>
+</html>`;
+}
+
+function panelHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  nonce: string,
+  title: string,
+  layout: DatasetViewLayout = "explorer",
+): string {
+  if (layout === "editor") {
+    return editorPanelHtml(webview, extensionUri, nonce, title);
+  }
   if (!isCspNonce(nonce)) {
     throw new Error("Webview nonce is not a valid CSP nonce");
   }
@@ -163,6 +273,20 @@ export interface DatasetViewSurface {
 
 const viewSessions = new WeakMap<object, DatasetViewSession>();
 
+/** The dataset surface a command may copy from. */
+export interface DatasetQuerySurface {
+  requestDqlText(): Promise<string>;
+  datasetPath(): string | undefined;
+  columnSnapshot(): ColumnMeta[];
+}
+
+let activeEditorSession: DatasetViewSession | undefined;
+
+export function activeDatasetEditorSession(): DatasetQuerySurface | undefined {
+  if (activeEditorSession?.isEditorActive()) return activeEditorSession;
+  return undefined;
+}
+
 function bindDatasetViewSession(
   owner: object,
   surface: DatasetViewSurface,
@@ -198,13 +322,19 @@ export function ensureDatasetViewSession(
   if (!panelSubscriptions.has(panel)) {
     panelSubscriptions.set(
       panel,
-      panel.onDidDispose(() => {
-        session.dispose();
-        viewSessions.delete(panel);
-        panelSubscriptions.delete(panel);
-      }),
+      vscode.Disposable.from(
+        panel.onDidDispose(() => {
+          session.dispose();
+          viewSessions.delete(panel);
+          panelSubscriptions.delete(panel);
+        }),
+        panel.onDidChangeViewState((event) => {
+          session.setEditorActive(event.webviewPanel.active);
+        }),
+      ),
     );
   }
+  session.setEditorActive(panel.active);
   return session;
 }
 
@@ -243,6 +373,14 @@ const viewSubscriptions = new WeakMap<vscode.WebviewView, vscode.Disposable>();
 class DatasetViewSession {
   private readonly nonce: string;
   private currentFilePath: string | undefined;
+  private datasetId: string | undefined;
+  private columns: ColumnMeta[] = [];
+  private editorActive = false;
+  private dqlRequestSeq = 0;
+  private readonly dqlWaiters = new Map<
+    string,
+    { resolve: (dql: string) => void; timer: ReturnType<typeof setTimeout> }
+  >();
   private fileWatcher: vscode.FileSystemWatcher | undefined;
   private webviewReady = false;
   private pendingPosts: HostToWebviewMessage[] = [];
@@ -272,11 +410,45 @@ class DatasetViewSession {
       options.extensionUri,
       this.nonce,
       options.title,
+      options.layout ?? "explorer",
     );
     logInfo("Dataset webview HTML assigned after message listener");
   }
 
+  datasetPath(): string | undefined {
+    return this.currentFilePath;
+  }
+
+  columnSnapshot(): ColumnMeta[] {
+    return this.columns;
+  }
+
+  isEditorActive(): boolean {
+    return this.editorActive;
+  }
+
+  setEditorActive(active: boolean): void {
+    this.editorActive = active;
+    if (active) activeEditorSession = this;
+    else if (activeEditorSession === this) activeEditorSession = undefined;
+  }
+
+  requestDqlText(): Promise<string> {
+    const requestId = `dql-${++this.dqlRequestSeq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.dqlWaiters.delete(requestId);
+        reject(new Error("The dataset view did not return its query text"));
+      }, 2000);
+      this.dqlWaiters.set(requestId, { resolve, timer });
+      this.post({ type: "requestDql", requestId });
+    });
+  }
+
   dispose(): void {
+    this.setEditorActive(false);
+    for (const waiter of this.dqlWaiters.values()) clearTimeout(waiter.timer);
+    this.dqlWaiters.clear();
     if (this.undeliveredTimer !== undefined) {
       clearTimeout(this.undeliveredTimer);
       this.undeliveredTimer = undefined;
@@ -437,6 +609,8 @@ class DatasetViewSession {
       if (token?.isCancellationRequested || generation !== this.loadGeneration) {
         return false;
       }
+      this.datasetId = session.handle.datasetId;
+      this.columns = session.handle.columns;
       this.watchSourceFile(filePath);
       this.surface.setTitle(filePath.split(/[/\\]/).pop() ?? "Data Pilot");
       logInfo(`Posting dataset session (gen=${generation})`);
@@ -470,6 +644,15 @@ class DatasetViewSession {
       return;
     }
 
+    if (msg.type === "reportDql") {
+      const waiter = this.dqlWaiters.get(msg.requestId);
+      if (!waiter) return;
+      clearTimeout(waiter.timer);
+      this.dqlWaiters.delete(msg.requestId);
+      waiter.resolve(msg.dql);
+      return;
+    }
+
     if (msg.type === "webviewReady") {
       if (this.webviewReady) {
         logInfo("Dataset webview ready (again) — resync UI");
@@ -479,6 +662,17 @@ class DatasetViewSession {
       this.flushPendingPosts();
       return;
     }
+
+    const boundDatasetId = (): string => {
+      if (!this.datasetId) {
+        throw {
+          code: "no-dataset",
+          severity: "error",
+          message: "Open a dataset first",
+        } satisfies Diagnostic;
+      }
+      return this.datasetId;
+    };
 
     const showErr = (err: unknown): void => {
       const message =
@@ -501,10 +695,15 @@ class DatasetViewSession {
       return;
     }
 
+    if (msg.type === "copyText") {
+      await vscode.env.clipboard.writeText(msg.text);
+      return;
+    }
+
     if (msg.type === "inspectCell") {
       const generation = this.loadGeneration;
       try {
-        const detail = await this.engine.inspectCell(msg.rowIndex, msg.column);
+        const detail = await this.engine.inspectCell(boundDatasetId(), msg.rowIndex, msg.column);
         if (generation !== this.loadGeneration) return;
         this.post({
           type: "inspectResult",
@@ -522,7 +721,12 @@ class DatasetViewSession {
 
     if (msg.type === "proposeEdit") {
       try {
-        const preview = await this.engine.proposeEdit(msg.rowIndex, msg.column, msg.newRaw);
+        const preview = await this.engine.proposeEdit(
+          boundDatasetId(),
+          msg.rowIndex,
+          msg.column,
+          msg.newRaw,
+        );
         this.post({ type: "editPreview", preview });
       } catch (err) {
         showErr(err);
@@ -532,7 +736,12 @@ class DatasetViewSession {
 
     if (msg.type === "applyEdit") {
       try {
-        const applied = await this.engine.applyEdit(msg.rowIndex, msg.column, msg.newRaw);
+        const applied = await this.engine.applyEdit(
+          boundDatasetId(),
+          msg.rowIndex,
+          msg.column,
+          msg.newRaw,
+        );
         if (!applied.written) {
           this.post({ type: "editPreview", preview: applied.editPreview });
           return;
@@ -559,7 +768,7 @@ class DatasetViewSession {
 
     if (msg.type === "saveQuery") {
       try {
-        const plan = await this.engine.planQuery(msg.dql);
+        const plan = await this.engine.planQuery(boundDatasetId(), msg.dql);
         if (!planLooksRunnable(plan.diagnostics)) {
           this.post({
             type: "dqlPlan",
@@ -568,7 +777,7 @@ class DatasetViewSession {
           });
           return;
         }
-        const saved = await this.engine.saveQuery(msg.dql);
+        const saved = await this.engine.saveQuery(boundDatasetId(), msg.dql);
         const queries = this.savedQueryStore.append(saved);
         this.post({ type: "savedQueries", queries });
         void vscode.window.showInformationMessage("Query saved to workspace state");
@@ -580,7 +789,7 @@ class DatasetViewSession {
 
     if (msg.type === "exportQuery") {
       try {
-        const plan = await this.engine.planQuery(msg.dql);
+        const plan = await this.engine.planQuery(boundDatasetId(), msg.dql);
         if (!planLooksRunnable(plan.diagnostics)) {
           this.post({
             type: "dqlPlan",
@@ -590,6 +799,7 @@ class DatasetViewSession {
           return;
         }
         const artifact = await this.engine.exportQueryResult(
+          boundDatasetId(),
           msg.dql,
           msg.format ?? "same-as-source",
         );
@@ -612,7 +822,7 @@ class DatasetViewSession {
 
     if (msg.type === "planDql") {
       try {
-        const plan = await this.engine.planQuery(msg.dql);
+        const plan = await this.engine.planQuery(boundDatasetId(), msg.dql);
         const ok = planLooksRunnable(plan.diagnostics);
         this.post({
           type: "dqlPlan",
@@ -629,7 +839,7 @@ class DatasetViewSession {
     if (msg.type === "runQuery") {
       const generation = this.loadGeneration;
       try {
-        const plan = await this.engine.planQuery(msg.dql);
+        const plan = await this.engine.planQuery(boundDatasetId(), msg.dql);
         if (generation !== this.loadGeneration) return;
         const ok = planLooksRunnable(plan.diagnostics);
         this.post({
@@ -646,7 +856,7 @@ class DatasetViewSession {
 
       this.post({ type: "queryState", running: true });
       try {
-        const result = await this.engine.executeQuery(msg.dql);
+        const result = await this.engine.executeQuery(boundDatasetId(), msg.dql);
         if (generation !== this.loadGeneration) return;
         this.post({
           type: "queryResult",
