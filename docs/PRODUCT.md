@@ -1,6 +1,6 @@
 # Data Pilot — Product
 
-**Status:** Phase 8 — local MCP (verified)  
+**Status:** Phase 7 — apply save snapshot (verified)  
 **Author:** Ángel Jiménez Ríos  
 **Plan:** Context `docs/data-pilot-plan.md` (project store) · decisions D-001…D-006
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse/sync";
@@ -23,6 +24,14 @@ export interface EditPreview {
   newRaw: string;
   unifiedDiff: string;
   afterText: string;
+  /** `stat.size` of the file when it was read. */
+  sourceByteLength: number;
+  /** SHA-256 hex of the UTF-8 text that was read. */
+  sourceSha256: string;
+}
+
+export function hashSourceText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 function unifiedDiff(path: string, before: string, after: string): string {
@@ -50,7 +59,10 @@ function unifiedDiff(path: string, before: string, after: string): string {
   return out.join("\n");
 }
 
-async function readTextBounded(filePath: string, maxBytes: number): Promise<string> {
+async function readTextBounded(
+  filePath: string,
+  maxBytes: number,
+): Promise<{ text: string; byteLength: number }> {
   const stat = await fs.stat(filePath);
   if (stat.size > maxBytes) {
     throw editError(
@@ -58,7 +70,7 @@ async function readTextBounded(filePath: string, maxBytes: number): Promise<stri
       `File exceeds edit limit (${stat.size} B > ${maxBytes} B)`,
     );
   }
-  return fs.readFile(filePath, "utf8");
+  return { text: await fs.readFile(filePath, "utf8"), byteLength: stat.size };
 }
 
 function editError(code: string, message: string): Diagnostic & Error {
@@ -96,7 +108,7 @@ export function buildEditPreview(
   target: CellEditTarget,
   beforeText: string,
   newRaw: string,
-): EditPreview {
+): Omit<EditPreview, "sourceByteLength" | "sourceSha256"> {
   const rel = path.basename(target.filePath);
   let afterText: string;
   let oldRaw: string;
@@ -150,8 +162,12 @@ export async function previewCellEdit(
   newRaw: string,
   maxBytes = DEFAULT_MAX_EDIT_BYTES,
 ): Promise<EditPreview> {
-  const beforeText = await readTextBounded(target.filePath, maxBytes);
-  return buildEditPreview(target, beforeText, newRaw);
+  const read = await readTextBounded(target.filePath, maxBytes);
+  return {
+    ...buildEditPreview(target, read.text, newRaw),
+    sourceByteLength: read.byteLength,
+    sourceSha256: hashSourceText(read.text),
+  };
 }
 
 /** Returns the text the host should write. Does not rename or modify the source file. */

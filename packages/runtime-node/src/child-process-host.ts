@@ -11,6 +11,7 @@ import {
   type IpcRequest,
   type IpcResponse,
 } from "@data-pilot/contracts";
+export { SOURCE_CHANGED_MESSAGE, sourceStillMatches } from "./source-snapshot.js";
 
 export interface HostOptions {
   /** Absolute path to engine-worker entry (ts or js). Required. */

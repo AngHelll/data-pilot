@@ -5,11 +5,17 @@
     let canExecuteQuery = false;
     let canEdit = false;
     let canExport = false;
+    let canCompare = false;
+    let comparePeers = [];
     let savedQueries = [];
     let columnTypes = [];
     let selected = null;
+    let selectedPos = null;
     let planTimer = null;
     let inspectRaw = "";
+    let lastGrid = null;
+    const hiddenColumns = new Set();
+    const columnWidths = new Map();
 
     const els = {
       loading: document.getElementById("loading"),
@@ -39,6 +45,29 @@
       previewEdit: document.getElementById("preview-edit"),
       applyEdit: document.getElementById("apply-edit"),
       editDiff: document.getElementById("edit-diff"),
+      result: document.getElementById("result"),
+      resultGrid: document.getElementById("result-grid"),
+      resultFooter: document.getElementById("result-footer"),
+      resultEmpty: document.getElementById("result-empty"),
+      tabData: document.getElementById("tab-data"),
+      tabResult: document.getElementById("tab-result"),
+      tabCompare: document.getElementById("tab-compare"),
+      tabProfile: document.getElementById("tab-profile"),
+      panelData: document.getElementById("panel-data"),
+      panelResult: document.getElementById("panel-result"),
+      panelCompare: document.getElementById("panel-compare"),
+      panelProfile: document.getElementById("panel-profile"),
+      profileBody: document.querySelector("#profile-table tbody"),
+      compareEmpty: document.getElementById("compare-empty"),
+      compareControls: document.getElementById("compare-controls"),
+      comparePeer: document.getElementById("compare-peer"),
+      compareColumn: document.getElementById("compare-column"),
+      compareRun: document.getElementById("compare-run"),
+      compareDiagnostics: document.getElementById("compare-diagnostics"),
+      compareLists: document.getElementById("compare-lists"),
+      compareOnlyLeft: document.getElementById("compare-only-left"),
+      compareOnlyRight: document.getElementById("compare-only-right"),
+      compareChanged: document.getElementById("compare-changed"),
     };
 
     function text(el, value) {
@@ -69,6 +98,123 @@
         els.schemaBody.appendChild(tr);
       }
       columnTypes = desc.columns;
+      fillCompareColumns();
+      renderProfile(desc.columns);
+    }
+
+    function renderProfile(columns) {
+      if (!els.profileBody) return;
+      els.profileBody.replaceChildren();
+      for (const col of columns) {
+        const tr = document.createElement("tr");
+        const cells = [
+          col.name,
+          col.inferredType,
+          col.sampleSize != null ? String(col.sampleSize) : "",
+          col.nullCountSample != null ? String(col.nullCountSample) : "",
+          col.missingCountSample != null ? String(col.missingCountSample) : "",
+          col.distinctCountSample != null ? String(col.distinctCountSample) : "",
+          col.minSample ?? "",
+          col.maxSample ?? "",
+        ];
+        for (const cell of cells) {
+          const td = document.createElement("td");
+          text(td, cell);
+          tr.appendChild(td);
+        }
+        els.profileBody.appendChild(tr);
+      }
+    }
+
+    function fillKeyList(list, keys) {
+      if (!list) return;
+      list.replaceChildren();
+      if (!keys.length) {
+        const li = document.createElement("li");
+        li.textContent = "None";
+        list.appendChild(li);
+        return;
+      }
+      for (const key of keys) {
+        const li = document.createElement("li");
+        li.textContent = key;
+        list.appendChild(li);
+      }
+    }
+
+    function sharedColumns(peer) {
+      const mine = new Set(columnTypes.map((column) => column.name));
+      return peer.columns.filter((name) => mine.has(name));
+    }
+
+    function fillCompareColumns() {
+      const select = els.compareColumn;
+      if (!select) return;
+      const peer = comparePeers.find((item) => item.datasetId === els.comparePeer.value);
+      const previous = select.value;
+      select.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Key column";
+      select.appendChild(placeholder);
+      if (!peer) return;
+      for (const name of sharedColumns(peer)) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+      }
+      if ([...select.options].some((option) => option.value === previous)) {
+        select.value = previous;
+      }
+    }
+
+    function renderComparePeers(peers) {
+      if (!els.compareEmpty || !els.compareControls || !els.comparePeer) return;
+      comparePeers = peers;
+      els.compareEmpty.hidden = peers.length > 0;
+      els.compareControls.hidden = peers.length === 0;
+      const previous = els.comparePeer.value;
+      els.comparePeer.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Choose dataset";
+      els.comparePeer.appendChild(placeholder);
+      for (const peer of peers) {
+        const option = document.createElement("option");
+        option.value = peer.datasetId;
+        option.textContent = peer.label;
+        els.comparePeer.appendChild(option);
+      }
+      if (peers.some((peer) => peer.datasetId === previous)) els.comparePeer.value = previous;
+      fillCompareColumns();
+      if (els.compareRun) els.compareRun.disabled = !canCompare;
+    }
+
+    function renderCompareResult(msg) {
+      if (!els.compareDiagnostics || !els.compareLists) return;
+      els.compareDiagnostics.replaceChildren();
+      for (const item of msg.diagnostics || []) {
+        const li = document.createElement("li");
+        li.className = item.severity === "error" ? "err" : "warn";
+        li.textContent = item.message;
+        els.compareDiagnostics.appendChild(li);
+      }
+      if (msg.completion !== "complete") {
+        els.compareLists.hidden = true;
+        return;
+      }
+      els.compareLists.hidden = false;
+      fillKeyList(els.compareOnlyLeft, msg.onlyLeft || []);
+      fillKeyList(els.compareOnlyRight, msg.onlyRight || []);
+      if (!els.compareChanged) return;
+      els.compareChanged.replaceChildren();
+      for (const row of msg.changed || []) {
+        const li = document.createElement("li");
+        const columns = row.columns && row.columns.length ? " · " + row.columns.join(", ") : "";
+        li.textContent = row.key + columns;
+        els.compareChanged.appendChild(li);
+      }
     }
 
     function highlightDqlRange(range) {
@@ -119,12 +265,134 @@
       }, 450);
     }
 
+    function visibleNames(columns) {
+      const shown = columns.filter((name) => name && !hiddenColumns.has(name));
+      return shown.length > 0 ? shown : columns.slice(0, 1);
+    }
+
+    function syncFilterColumns(columns) {
+      const sel = document.getElementById("filter-column");
+      if (!sel) return;
+      const current = sel.value;
+      sel.replaceChildren();
+      const blank = document.createElement("option");
+      blank.value = "";
+      text(blank, "Column");
+      sel.appendChild(blank);
+      for (const name of columns) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        text(opt, name);
+        sel.appendChild(opt);
+      }
+      if (columns.indexOf(current) >= 0) sel.value = current;
+    }
+
+    function syncColumnPicker(columns) {
+      const body = document.getElementById("column-picker-body");
+      if (!body) return;
+      body.replaceChildren();
+      for (const name of columns) {
+        const label = document.createElement("label");
+        label.className = "col-check";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = !hiddenColumns.has(name);
+        input.addEventListener("change", () => {
+          if (!input.checked) {
+            const remaining = columns.filter((n) => n !== name && !hiddenColumns.has(n));
+            if (remaining.length === 0) {
+              input.checked = true;
+              return;
+            }
+            hiddenColumns.add(name);
+          } else {
+            hiddenColumns.delete(name);
+          }
+          if (lastGrid) renderGrid(lastGrid);
+        });
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(" " + name));
+        body.appendChild(label);
+      }
+    }
+
+    function showEditorTab(name) {
+      const panels = {
+        data: els.panelData,
+        result: els.panelResult,
+        compare: els.panelCompare,
+        profile: els.panelProfile,
+      };
+      const tabs = {
+        data: els.tabData,
+        result: els.tabResult,
+        compare: els.tabCompare,
+        profile: els.tabProfile,
+      };
+      if (!panels[name]) return;
+      for (const key of Object.keys(panels)) {
+        if (panels[key]) panels[key].hidden = key !== name;
+        if (tabs[key]) tabs[key].setAttribute("aria-selected", key === name ? "true" : "false");
+      }
+    }
+
+    function clearResult() {
+      if (els.resultEmpty) els.resultEmpty.hidden = false;
+      if (!els.result) return;
+      els.result.hidden = true;
+      if (els.resultFooter) text(els.resultFooter, "");
+      const thead = els.resultGrid && els.resultGrid.querySelector("thead");
+      const tbody = els.resultGrid && els.resultGrid.querySelector("tbody");
+      if (thead) thead.replaceChildren();
+      if (tbody) tbody.replaceChildren();
+    }
+
+    function renderResult(grid) {
+      if (!els.result || !els.resultGrid) return;
+      if (els.resultEmpty) els.resultEmpty.hidden = true;
+      els.result.hidden = false;
+      const thead = els.resultGrid.querySelector("thead");
+      const tbody = els.resultGrid.querySelector("tbody");
+      thead.replaceChildren();
+      tbody.replaceChildren();
+      const hr = document.createElement("tr");
+      const thIdx = document.createElement("th");
+      text(thIdx, "#");
+      hr.appendChild(thIdx);
+      for (const col of grid.columns) {
+        const th = document.createElement("th");
+        text(th, col);
+        hr.appendChild(th);
+      }
+      thead.appendChild(hr);
+      grid.rows.forEach((row, ri) => {
+        const tr = document.createElement("tr");
+        const index = document.createElement("td");
+        index.className = "num";
+        text(index, String(ri));
+        tr.appendChild(index);
+        row.forEach((cell) => {
+          const td = document.createElement("td");
+          text(td, cell);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      if (els.resultFooter) {
+        text(els.resultFooter, grid.rowCountReturned + " rows · " + grid.completion);
+      }
+    }
+
     function renderGrid(grid) {
-      text(els.gridLabel, grid.mode === "query" ? "Query result" : "Preview sample");
+      lastGrid = grid;
+      text(els.gridLabel, "Preview sample");
       const thead = els.grid.querySelector("thead");
       const tbody = els.grid.querySelector("tbody");
       thead.replaceChildren();
       tbody.replaceChildren();
+      const names = visibleNames(grid.columns);
+      const shown = new Set(names);
       const hr = document.createElement("tr");
       const thIdx = document.createElement("th");
       text(thIdx, "#");
@@ -132,21 +400,48 @@
       columnTypes = grid.columnTypes || [];
       for (let ci = 0; ci < grid.columns.length; ci++) {
         const col = grid.columns[ci];
+        if (!shown.has(col)) continue;
         const th = document.createElement("th");
         const inferred = columnTypes[ci] && columnTypes[ci].inferredType;
-        text(th, inferred ? col + " (" + inferred + ")" : col);
+        const label = document.createElement("span");
+        text(label, inferred ? col + " (" + inferred + ")" : col);
+        th.appendChild(label);
+        const grip = document.createElement("span");
+        grip.className = "col-resize";
+        grip.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const startX = event.clientX;
+          const startW = th.getBoundingClientRect().width;
+          const move = (ev) => {
+            const next = Math.max(72, startW + ev.clientX - startX);
+            columnWidths.set(col, next);
+            th.style.width = next + "px";
+          };
+          const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+          };
+          window.addEventListener("mousemove", move);
+          window.addEventListener("mouseup", up);
+        });
+        th.appendChild(grip);
+        const width = columnWidths.get(col);
+        if (typeof width === "number") th.style.width = width + "px";
         hr.appendChild(th);
       }
       thead.appendChild(hr);
       grid.rows.forEach((row, ri) => {
         const tr = document.createElement("tr");
         row.forEach((cell, ci) => {
+          const col = grid.columns[ci] || "";
+          if (!shown.has(col)) return;
           const td = document.createElement("td");
           td.className = "cell";
           text(td, cell);
           td.dataset.row = String(ri);
-          td.dataset.col = grid.columns[ci] || "";
-          td.addEventListener("click", () => selectCell(ri, grid.columns[ci] || "", cell, td));
+          td.dataset.col = col;
+          td.addEventListener("click", () => selectCell(ri, col, cell, td));
           tr.appendChild(td);
         });
         tr.insertBefore((() => {
@@ -157,6 +452,15 @@
         })(), tr.firstChild);
         tbody.appendChild(tr);
       });
+      if (selectedPos) {
+        const keep = tbody.querySelector(
+          'td.cell[data-row="' + selectedPos.row + '"][data-col="' + CSS.escape(selectedPos.column) + '"]',
+        );
+        if (keep) keep.classList.add("selected");
+        else selectedPos = null;
+      }
+      syncFilterColumns(grid.columns);
+      syncColumnPicker(grid.columns);
       const parts = [
         grid.rowCountReturned + " rows shown",
         "completion: " + grid.completion,
@@ -196,6 +500,7 @@
       }
       td.classList.add("selected");
       selected = { rowIndex, column, display };
+      selectedPos = { row: rowIndex, column };
       els.editValue.value = display === "null" || display === "·" ? "" : display;
       text(els.inspectDetail, "Loading…");
       text(els.editDiff, "");
@@ -228,6 +533,54 @@
         text(opt, label);
         els.savedQueries.appendChild(opt);
       }
+    }
+
+    els.grid.addEventListener("keydown", (event) => {
+      if (!lastGrid) return;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
+      const names = visibleNames(lastGrid.columns);
+      if (!names.length || !lastGrid.rows.length) return;
+      event.preventDefault();
+      let ri = selectedPos ? selectedPos.row : 0;
+      let ci = selectedPos ? names.indexOf(selectedPos.column) : 0;
+      if (ci < 0) ci = 0;
+      if (event.key === "ArrowUp") ri = Math.max(0, ri - 1);
+      if (event.key === "ArrowDown") ri = Math.min(lastGrid.rows.length - 1, ri + 1);
+      if (event.key === "ArrowLeft") ci = Math.max(0, ci - 1);
+      if (event.key === "ArrowRight") ci = Math.min(names.length - 1, ci + 1);
+      const name = names[ci];
+      const sourceIndex = lastGrid.columns.indexOf(name);
+      const td = els.grid.querySelector(
+        'td.cell[data-row="' + ri + '"][data-col="' + CSS.escape(name) + '"]',
+      );
+      if (!td || sourceIndex < 0) return;
+      selectCell(ri, name, lastGrid.rows[ri][sourceIndex], td);
+      td.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+
+    const applyFilter = document.getElementById("apply-filter");
+    const filterOp = document.getElementById("filter-op");
+    const filterValue = document.getElementById("filter-value");
+    if (filterOp && filterValue) {
+      filterOp.addEventListener("change", () => {
+        const nullOp = filterOp.value === "is null" || filterOp.value === "is not null";
+        filterValue.disabled = nullOp;
+      });
+    }
+    if (applyFilter) {
+      applyFilter.addEventListener("click", () => {
+        const columnEl = document.getElementById("filter-column");
+        const column = columnEl ? columnEl.value : "";
+        const op = filterOp ? filterOp.value : "";
+        const value = filterValue ? filterValue.value : "";
+        const searchEl = document.getElementById("filter-search");
+        const search = searchEl ? searchEl.value.trim() : "";
+        if (!search && !(column && op)) return;
+        const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
+        vscode.postMessage({ type: "applyFilter", column, op, value, search, columns });
+      });
     }
 
     els.dql.addEventListener("input", () => schedulePlan());
@@ -311,6 +664,25 @@
       });
     });
 
+    if (els.tabData) els.tabData.addEventListener("click", () => showEditorTab("data"));
+    if (els.tabResult) els.tabResult.addEventListener("click", () => showEditorTab("result"));
+    if (els.tabCompare) els.tabCompare.addEventListener("click", () => showEditorTab("compare"));
+    if (els.tabProfile) els.tabProfile.addEventListener("click", () => showEditorTab("profile"));
+
+    if (els.comparePeer) {
+      els.comparePeer.addEventListener("change", () => fillCompareColumns());
+    }
+    if (els.compareRun) {
+      els.compareRun.addEventListener("click", () => {
+        if (!canCompare || !els.comparePeer.value || !els.compareColumn.value) return;
+        vscode.postMessage({
+          type: "compareDatasets",
+          rightDatasetId: els.comparePeer.value,
+          column: els.compareColumn.value,
+        });
+      });
+    }
+
     els.applyEdit.addEventListener("click", () => {
       if (!canEdit || !selected) return;
       vscode.postMessage({
@@ -337,6 +709,8 @@
         canExecuteQuery = !!msg.canExecuteQuery;
         canEdit = !!msg.canEdit;
         canExport = !!msg.canExport;
+        canCompare = msg.trustMode !== "untrusted-limited";
+        if (els.compareRun) els.compareRun.disabled = !canCompare;
         els.run.disabled = !canExecuteQuery;
         els.plan.disabled = !canExecuteQuery;
         els.dql.disabled = !canExecuteQuery;
@@ -374,6 +748,14 @@
         renderSavedQueries(msg.queries);
         return;
       }
+      if (msg.type === "comparePeers") {
+        renderComparePeers(msg.peers || []);
+        return;
+      }
+      if (msg.type === "compareResult") {
+        renderCompareResult(msg);
+        return;
+      }
       if (msg.type === "queryLoaded") {
         els.dql.value = msg.dql;
         schedulePlan();
@@ -402,6 +784,8 @@
         renderDescribe(msg.describe);
         renderIngestDiagnostics(msg.ingestDiagnostics);
         renderGrid(msg.preview);
+        clearResult();
+        showEditorTab("data");
         return;
       }
       if (msg.type === "dqlPlan") {
@@ -437,6 +821,8 @@
           inspectRaw = "";
           renderEditorSummary(h, msg.preview);
           renderGrid(msg.preview);
+          clearResult();
+          showEditorTab("data");
         } catch (err) {
           if (els.loading) els.loading.hidden = false;
           text(els.loading, "UI error: " + (err && err.message ? err.message : String(err)));
@@ -445,7 +831,8 @@
       }
       if (msg.type === "queryResult") {
         renderDqlDiagnostics(msg.diagnostics);
-        renderGrid(msg.result);
+        renderResult(msg.result);
+        showEditorTab("result");
         return;
       }
       if (msg.type === "error") {

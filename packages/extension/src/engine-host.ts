@@ -3,6 +3,8 @@ import * as path from "node:path";
 import {
   type Diagnostic,
   type DatasetHandle,
+  type KeyDiffResult,
+  DEFAULT_PREVIEW_BUDGET,
   type ExportArtifact,
   type ExportFormat,
   type IpcResponse,
@@ -11,7 +13,7 @@ import {
   type TrustMode,
 } from "@data-pilot/contracts";
 import { assertOpAllowed, type PlanResult, type SessionContext } from "@data-pilot/core";
-import { ChildProcessHost } from "@data-pilot/runtime-node";
+import { ChildProcessHost, SOURCE_CHANGED_MESSAGE, sourceStillMatches } from "@data-pilot/runtime-node";
 import { DatasetSessionRegistry, type OpenDatasetSession } from "./dataset-sessions";
 import { replaceOpenDatasetFile } from "./fixture-writer";
 import { logError, logInfo } from "./log";
@@ -53,6 +55,10 @@ export class ExtensionEngineHost {
   /** Sessions already open in this window. The tree does not scan the workspace. */
   listOpenSessions(): OpenDatasetSession[] {
     return this.sessions.entries();
+  }
+
+  columnNames(datasetId: string): string[] {
+    return this.openHandles.get(datasetId)?.handle.columns.map((column) => column.name) ?? [];
   }
 
   onSessionsChanged(listener: () => void): vscode.Disposable {
@@ -189,11 +195,11 @@ export class ExtensionEngineHost {
         handle: DatasetHandle;
         diagnostics: Diagnostic[];
       };
-      this.sessions.remember(filePath, opened.handle.datasetId);
       this.openHandles.set(opened.handle.datasetId, {
         handle: opened.handle,
         diagnostics: opened.diagnostics,
       });
+      this.sessions.remember(filePath, opened.handle.datasetId);
 
       logInfo(`IPC preview → ${opened.handle.datasetId}`);
       const preview = await host.request(
@@ -327,6 +333,24 @@ export class ExtensionEngineHost {
     }
   }
 
+  async compareDatasets(leftId: string, rightId: string, column: string): Promise<KeyDiffResult> {
+    const blocked = assertOpAllowed(trustContext(), "compareDatasets");
+    if (blocked) throw blocked;
+    const host = await this.ensureStarted();
+    const response = await host.request(
+      "compareDatasets",
+      {
+        leftDatasetId: leftId,
+        rightDatasetId: rightId,
+        column,
+        budget: { maxScanBytes: DEFAULT_PREVIEW_BUDGET.maxBytes },
+      },
+      { timeoutMs: 120_000 },
+    );
+    if (!response.ok) throw ipcError(response);
+    return response.result as KeyDiffResult;
+  }
+
   async cancelActiveQuery(): Promise<void> {
     if (!this.activeQueryRequestId || !this.host) return;
     await this.host.cancel(this.activeQueryRequestId).catch(() => undefined);
@@ -403,7 +427,11 @@ export class ExtensionEngineHost {
       { timeoutMs: 60_000 },
     );
     if (!response.ok) throw ipcError(response);
-    const result = response.result as SerializedEditPreview & { afterText?: string };
+    const result = response.result as SerializedEditPreview & {
+      afterText?: string;
+      sourceByteLength?: unknown;
+      sourceSha256?: unknown;
+    };
     const editPreview: SerializedEditPreview = {
       path: result.path,
       rowIndex: result.rowIndex,
@@ -420,6 +448,13 @@ export class ExtensionEngineHost {
         code: "edit-empty",
         severity: "error",
         message: "Engine did not return file text for apply",
+      } satisfies Diagnostic;
+    }
+    if (!(await sourceStillMatches(result.path, result))) {
+      throw {
+        code: "source-changed",
+        severity: "error",
+        message: SOURCE_CHANGED_MESSAGE,
       } satisfies Diagnostic;
     }
     await replaceOpenDatasetFile(result.path, result.afterText);

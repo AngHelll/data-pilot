@@ -8,6 +8,7 @@ export { DEFAULT_NULL_TOKENS, tagCsvCell, classifySample } from "./cell.js";
 export { scanPreview, countLines, type ScanPreviewResult } from "./scan.js";
 export {
   DEFAULT_MAX_EDIT_BYTES,
+  hashSourceText,
   type CellEditTarget,
   type EditPreview,
 } from "./fixture-edit.js";

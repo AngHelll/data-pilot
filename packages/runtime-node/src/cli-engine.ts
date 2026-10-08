@@ -120,6 +120,50 @@ export class DatasetSession {
     return { ok: true, result: queried.response.result };
   }
 
+  async exportQuery(
+    filePath: string,
+    dql: string,
+    params?: Record<string, string>,
+    format?: "csv" | "jsonl",
+  ): Promise<EngineResult> {
+    const body = await this.ensureOpen(filePath);
+    if (!("handle" in body)) return body;
+    const exported = await this.ipc("exportResult", {
+      datasetId: body.handle.datasetId,
+      dql,
+      ...(params && Object.keys(params).length > 0 ? { params } : {}),
+      ...(format !== undefined ? { format } : {}),
+    });
+    if (exported.kind !== "response") return this.callFailure(exported);
+    if (!exported.response.ok) {
+      return { ok: false, message: exported.response.error.message };
+    }
+    return { ok: true, result: exported.response.result };
+  }
+
+  async editCell(
+    filePath: string,
+    rowIndex: number,
+    column: string,
+    newRaw: string,
+    apply: boolean,
+  ): Promise<EngineResult> {
+    const body = await this.ensureOpen(filePath);
+    if (!("handle" in body)) return body;
+    const edited = await this.ipc("editFixture", {
+      datasetId: body.handle.datasetId,
+      rowIndex,
+      column,
+      newRaw,
+      apply,
+    });
+    if (edited.kind !== "response") return this.callFailure(edited);
+    if (!edited.response.ok) {
+      return { ok: false, message: edited.response.error.message };
+    }
+    return { ok: true, result: edited.response.result };
+  }
+
   async close(): Promise<EngineResult> {
     if (!this.open) return { ok: true, result: { datasetId: null } };
     const datasetId = this.open.datasetId;
@@ -162,7 +206,7 @@ export class DatasetSession {
   }
 
   private async ipc(
-    op: "openDataset" | "preview" | "executeQuery" | "closeDataset",
+    op: "openDataset" | "preview" | "executeQuery" | "closeDataset" | "exportResult" | "editFixture",
     payload: unknown,
   ): Promise<IpcCall> {
     try {

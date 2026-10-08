@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { access, copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -221,7 +223,7 @@ describe("data-pilot mcp", () => {
     assert.equal(rows.length, 5);
     assert.deepEqual(
       rows[1]?.result?.tools?.map((tool) => tool.name),
-      ["preview", "describe", "query"],
+      ["preview", "describe", "query", "export", "edit"],
     );
     const preview = JSON.parse(rows[2]?.result?.content?.[0]?.text ?? "{}") as {
       handle: { datasetId: string; columns: { name: string }[] };
@@ -259,5 +261,129 @@ describe("data-pilot mcp", () => {
     assert.equal(rows[0]?.result?.isError, true);
     assert.match(rows[0]?.result?.content?.[0]?.text ?? "", /agentQuery/);
     assert.equal(rows[1]?.result?.isError, false);
+  });
+});
+
+describe("data-pilot export", () => {
+  it("writes MX rows and leaves no file when the query does not parse", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "data-pilot-export-"));
+    const out = path.join(dir, "mx.csv");
+    const missing = path.join(dir, "no.csv");
+    try {
+      const ok = await run(["export", tiny, 'where country = "MX"', out]);
+      assert.equal(ok.code, 0, ok.stderr);
+      const json = JSON.parse(ok.stdout) as { path?: string; rowCount?: number; format?: string };
+      assert.equal(json.path, out);
+      assert.equal(json.rowCount, 2);
+      assert.equal(json.format, "csv");
+      const text = await readFile(out, "utf8");
+      assert.match(text, /Ada/);
+      assert.match(text, /Cam/);
+      assert.doesNotMatch(text, /Bob/);
+
+      const bad = await run(["export", tiny, 'country = "MX"', missing]);
+      assert.equal(bad.code, 1);
+      await assert.rejects(access(missing));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to write the export onto the source file", async () => {
+    const res = await run(["export", tiny, 'where country = "MX"', tiny]);
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /source file/);
+  });
+
+  it("exports through MCP", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "data-pilot-export-"));
+    const out = path.join(dir, "mx.csv");
+    try {
+      const res = await mcp([
+        rpc(1, "tools/call", {
+          name: "export",
+          arguments: { path: tiny, dql: 'where country = "MX"', out },
+        }),
+      ]);
+      assert.equal(res.code, 0, res.stderr);
+      const rows = replies(res.stdout) as unknown as { result?: { isError?: boolean; content?: { text: string }[] } }[];
+      assert.equal(rows[0]?.result?.isError, false);
+      const text = await readFile(out, "utf8");
+      assert.match(text, /Ada/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("data-pilot edit", () => {
+  it("previews a cell without writing, then apply changes that cell", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "data-pilot-edit-"));
+    const copy = path.join(dir, "tiny.csv");
+    await copyFile(tiny, copy);
+    const before = await readFile(copy, "utf8");
+    try {
+      const preview = await run(["edit", copy, "0", "country", "CA"]);
+      assert.equal(preview.code, 0, preview.stderr);
+      const shown = JSON.parse(preview.stdout) as {
+        oldRaw?: string;
+        newRaw?: string;
+        applied?: boolean;
+        unifiedDiff?: string;
+      };
+      assert.equal(shown.oldRaw, "MX");
+      assert.equal(shown.newRaw, "CA");
+      assert.equal(shown.applied, false);
+      assert.match(shown.unifiedDiff ?? preview.stdout, /MX/);
+      assert.equal(await readFile(copy, "utf8"), before);
+
+      const applied = await run(["edit", copy, "0", "country", "CA", "--apply"]);
+      assert.equal(applied.code, 0, applied.stderr);
+      const saved = JSON.parse(applied.stdout) as { applied?: boolean };
+      assert.equal(saved.applied, true);
+      const after = await readFile(copy, "utf8");
+      assert.match(after, /CA/);
+      assert.notEqual(after, before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an unknown column exits 1 and leaves the file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "data-pilot-edit-"));
+    const copy = path.join(dir, "tiny.csv");
+    await copyFile(tiny, copy);
+    const before = await readFile(copy, "utf8");
+    try {
+      const res = await run(["edit", copy, "0", "no-such", "ZZ"]);
+      assert.equal(res.code, 1);
+      assert.equal(await readFile(copy, "utf8"), before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("MCP edit without apply does not write", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "data-pilot-edit-"));
+    const copy = path.join(dir, "tiny.csv");
+    await copyFile(tiny, copy);
+    const before = await readFile(copy, "utf8");
+    try {
+      const res = await mcp([
+        rpc(1, "tools/call", {
+          name: "edit",
+          arguments: { path: copy, rowIndex: 0, column: "country", newRaw: "CA" },
+        }),
+      ]);
+      assert.equal(res.code, 0, res.stderr);
+      const rows = replies(res.stdout) as unknown as { result?: { isError?: boolean; content?: { text: string }[] } }[];
+      assert.equal(rows[0]?.result?.isError, false);
+      const body = JSON.parse(rows[0]?.result?.content?.[0]?.text ?? "{}") as { applied?: boolean; oldRaw?: string };
+      assert.equal(body.applied, false);
+      assert.equal(body.oldRaw, "MX");
+      assert.equal(await readFile(copy, "utf8"), before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

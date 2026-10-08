@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { analyzeDql } from "@data-pilot/dql";
-import type { ColumnMeta, Diagnostic, InferredType } from "@data-pilot/contracts";
+import type { ColumnMeta, Diagnostic, InferredType, SavedQuery } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
 import {
   chooseDatasetPath,
@@ -18,6 +18,7 @@ import {
   activeDatasetEditorSession,
   type DatasetQuerySurface,
 } from "./webview/dataset-panel";
+import { savedQueryLink } from "./saved-query-tree";
 
 const LINK_KEY = "dataPilot.dqlLinks.v1";
 const LANGUAGE_ID = "data-pilot-dql";
@@ -25,7 +26,6 @@ const LANGUAGE_ID = "data-pilot-dql";
 export function registerDqlEditor(
   context: vscode.ExtensionContext,
   engine: ExtensionEngineHost,
-  explorerSurface: () => DatasetQuerySurface | undefined,
 ): void {
   const lenses = new vscode.EventEmitter<void>();
   const targetHub = { sync: () => undefined as void };
@@ -199,16 +199,12 @@ export function registerDqlEditor(
       }
       await openSurfaceQuery(surface, links);
     }),
-    vscode.commands.registerCommand("dataPilot.openExplorerQueryInEditor", async () => {
-      const surface = explorerSurface();
-      if (!surface) {
-        void vscode.window.showInformationMessage("Open the Data Pilot explorer view first.");
-        return;
-      }
-      await openSurfaceQuery(surface, links);
-    }),
     vscode.commands.registerCommand("dataPilot.runDql", () => runActive(false)),
     vscode.commands.registerCommand("dataPilot.runDqlOn", () => runActive(true)),
+    vscode.commands.registerCommand("dataPilot.openSavedQuery", (query: SavedQuery | undefined) => {
+      if (!query || typeof query.dql !== "string") return;
+      return openSavedQuery(query, links);
+    }),
   );
 
   for (const document of vscode.workspace.textDocuments) refresh(document);
@@ -244,6 +240,20 @@ export async function openSurfaceQuery(
     datasetPath,
     columns: surface.columnSnapshot(),
   });
+}
+
+export async function openSavedQuery(query: SavedQuery, links: DqlLinkStore): Promise<void> {
+  const document = await vscode.workspace.openTextDocument({
+    language: LANGUAGE_ID,
+    content: query.dql,
+  });
+  const editor = await vscode.window.showTextDocument(document, {
+    viewColumn: vscode.ViewColumn.Beside,
+    preview: false,
+  });
+  const link = savedQueryLink(query);
+  if (!link) return;
+  links.remember(editor.document.uri.toString(), link);
 }
 
 export class DqlLinkStore {

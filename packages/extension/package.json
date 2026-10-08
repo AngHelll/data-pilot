@@ -17,8 +17,9 @@
     "onCommand:dataPilot.openDataset",
     "onCommand:dataPilot.openDatasetResource",
     "onCommand:dataPilot.openDatasetCustomEditor",
-    "onView:dataPilot.explorer",
     "onView:dataPilot.datasets",
+    "onView:dataPilot.savedQueries",
+    "onCommand:dataPilot.openSavedQuery",
     "onLanguage:data-pilot-dql",
     "onCommand:dataPilot.openQueryInEditor",
     "onCommand:dataPilot.runDql",
@@ -61,17 +62,8 @@
         "icon": "$(open-preview)"
       },
       {
-        "command": "dataPilot.refreshExplorerPreview",
-        "title": "Data Pilot: Refresh Preview",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "dataPilot.openQueryInEditor",
         "title": "Data Pilot: Open Query in Editor"
-      },
-      {
-        "command": "dataPilot.openExplorerQueryInEditor",
-        "title": "Data Pilot: Open Explorer Query in Editor"
       },
       {
         "command": "dataPilot.runDql",
@@ -85,6 +77,10 @@
       {
         "command": "dataPilot.showDqlTarget",
         "title": "Data Pilot: Show Query Dataset"
+      },
+      {
+        "command": "dataPilot.openSavedQuery",
+        "title": "Data Pilot: Open Saved Query"
       }
     ],
     "languages": [
@@ -111,18 +107,14 @@
       ]
     },
     "views": {
-      "explorer": [
-        {
-          "type": "webview",
-          "id": "dataPilot.explorer",
-          "name": "Data Pilot",
-          "when": "workspaceFolderCount != 0"
-        }
-      ],
       "dataPilot": [
         {
           "id": "dataPilot.datasets",
           "name": "Datasets"
+        },
+        {
+          "id": "dataPilot.savedQueries",
+          "name": "Saved Queries"
         }
       ]
     },
@@ -130,6 +122,10 @@
       {
         "view": "dataPilot.datasets",
         "contents": "No open datasets.\n[Open Dataset](command:dataPilot.openDataset)"
+      },
+      {
+        "view": "dataPilot.savedQueries",
+        "contents": "No saved queries."
       }
     ],
     "customEditors": [
@@ -166,11 +162,6 @@
       ],
       "editor/title": [
         {
-          "command": "dataPilot.refreshExplorerPreview",
-          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|jsonl|ndjson)$/i",
-          "group": "navigation@1"
-        },
-        {
           "command": "dataPilot.openQueryInEditor",
           "when": "activeCustomEditorId == dataPilot.dataset",
           "group": "navigation@3"
@@ -184,24 +175,6 @@
           "command": "dataPilot.runDqlOn",
           "when": "editorLangId == data-pilot-dql",
           "group": "navigation@1"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "dataPilot.refreshExplorerPreview",
-          "when": "view == dataPilot.explorer",
-          "group": "navigation"
-        },
-        {
-          "command": "dataPilot.openExplorerQueryInEditor",
-          "when": "view == dataPilot.explorer",
-          "group": "navigation@2"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "dataPilot.openExplorerQueryInEditor",
-          "when": "false"
         }
       ]
     },

@@ -10,6 +10,8 @@ import {
   type ExecuteQueryPayload,
   type EditFixturePayload,
   type ExportResultPayload,
+  type CompareDatasetsPayload,
+  DEFAULT_PREVIEW_BUDGET,
   type InspectValuePayload,
   type SaveQueryPayload,
   type IpcRequest,
@@ -20,6 +22,7 @@ import {
   isUntrustedAllowed,
 } from "@data-pilot/contracts";
 import {
+  CompareService,
   DatasetService,
   EditService,
   ExportService,
@@ -36,6 +39,7 @@ const store = new DatasetStore();
 const datasets = new DatasetService(store, trustMode);
 const queries = new QueryService(store, trustMode);
 const edits = new EditService(store, { trustMode });
+const compares = new CompareService(store, { trustMode });
 const exportsSvc = new ExportService(store, queries, { trustMode });
 
 const cancelled = new Set<string>();
@@ -249,6 +253,22 @@ async function handle(req: IpcRequest): Promise<void> {
         }
         const preview = await edits.preview(p.datasetId, p.rowIndex, p.column, newRaw);
         ok(req.requestId, preview);
+        return;
+      }
+      case "compareDatasets": {
+        const p = asRecord(req.payload) as unknown as CompareDatasetsPayload;
+        if (!p.leftDatasetId || !p.rightDatasetId || !p.column) {
+          fail(req.requestId, {
+            code: "invalid-payload",
+            severity: "error",
+            message: "compareDatasets requires leftDatasetId, rightDatasetId, and column",
+          });
+          return;
+        }
+        const result = await compares.compare(p.leftDatasetId, p.rightDatasetId, p.column, {
+          maxScanBytes: p.budget?.maxScanBytes ?? DEFAULT_PREVIEW_BUDGET.maxBytes,
+        });
+        ok(req.requestId, result);
         return;
       }
       case "saveQuery": {

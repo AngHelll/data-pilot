@@ -32,6 +32,12 @@ export interface ColumnMeta {
   nullCountSample?: number;
   missingCountSample?: number;
   sampleSize?: number;
+  /** Distinct concrete values in the describe sample. Null and missing do not count. */
+  distinctCountSample?: number;
+  /** Canonical numeric minimum. Present only when inferredType is integer or decimal. */
+  minSample?: string;
+  /** Canonical numeric maximum. Present only when inferredType is integer or decimal. */
+  maxSample?: string;
 }
 
 export interface DatasetRevision {
@@ -167,6 +173,7 @@ export type EngineOp =
   | "saveQuery"
   | "globalScan"
   | "agentQuery"
+  | "compareDatasets"
   | "ping"
   | "getStats";
 
@@ -283,6 +290,15 @@ export interface SavedQuery {
   params?: Record<string, DataValue>;
   schemaColumnNames: string[];
   savedAtMs: number;
+  /** Dataset file this query was saved against. Absent on queries saved before this field. */
+  datasetPath?: string;
+}
+
+export interface CompareDatasetsPayload {
+  leftDatasetId: string;
+  rightDatasetId: string;
+  column: string;
+  budget?: Pick<QueryBudget, "maxScanBytes">;
 }
 
 export interface SaveQueryPayload {

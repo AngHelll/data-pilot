@@ -41,4 +41,34 @@ test("parseWebviewMessage rejects empty DQL and empty inspect column", () => {
   assert.equal(parseWebviewMessage({ type: "exportQuery", dql: "" }), null);
   assert.equal(parseWebviewMessage({ type: "inspectCell", rowIndex: 0, column: "" }), null);
   assert.equal(parseWebviewMessage({ type: "exportQuery", dql: "where true", format: "parquet" }), null);
+  assert.equal(parseWebviewMessage({ type: "applyFilter", op: "like", columns: ["country"] }), null);
+  assert.equal(parseWebviewMessage({ type: "compareDatasets", rightDatasetId: "b", column: "" }), null);
+});
+
+test("parseWebviewMessage accepts compareDatasets", () => {
+  assert.deepEqual(
+    parseWebviewMessage({ type: "compareDatasets", rightDatasetId: "other", column: "id" }),
+    { type: "compareDatasets", rightDatasetId: "other", column: "id" },
+  );
+});
+
+test("parseWebviewMessage accepts applyFilter", () => {
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "applyFilter",
+      column: "country",
+      op: "=",
+      value: "MX",
+      search: "ada",
+      columns: ["name", "country"],
+    }),
+    {
+      type: "applyFilter",
+      column: "country",
+      op: "=",
+      value: "MX",
+      search: "ada",
+      columns: ["name", "country"],
+    },
+  );
 });

@@ -7,6 +7,7 @@ import type {
   SavedQuery,
   TrustMode,
 } from "@data-pilot/contracts";
+import { FILTER_OPS } from "../filter-dql";
 /** Host → webview (validated before postMessage). */
 export interface SerializedEditPreview {
   path: string;
@@ -75,6 +76,18 @@ export type HostToWebviewMessage =
       preview: SerializedGrid;
     }
   | { type: "queryState"; running: boolean }
+  | {
+      type: "comparePeers";
+      peers: { datasetId: string; label: string; columns: string[] }[];
+    }
+  | {
+      type: "compareResult";
+      completion: "complete" | "error";
+      diagnostics: Diagnostic[];
+      onlyLeft: string[];
+      onlyRight: string[];
+      changed: { key: string; columns: string[] }[];
+    }
   | { type: "error"; message: string }
   | { type: "idle"; message: string }
   | { type: "requestDql"; requestId: string };
@@ -93,7 +106,16 @@ export type WebviewToHostMessage =
   | { type: "copyText"; text: string }
   | { type: "reportDql"; requestId: string; dql: string }
   | { type: "proposeEdit"; rowIndex: number; column: string; newRaw: string }
-  | { type: "applyEdit"; rowIndex: number; column: string; newRaw: string };
+  | { type: "applyEdit"; rowIndex: number; column: string; newRaw: string }
+  | { type: "compareDatasets"; rightDatasetId: string; column: string }
+  | {
+      type: "applyFilter";
+      column?: string;
+      op?: string;
+      value?: string;
+      search?: string;
+      columns: string[];
+    };
 
 export interface SerializedGrid {
   mode: "preview" | "query";
@@ -181,6 +203,38 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       }
       if (typeof msg.dql !== "string" || msg.dql.length > MAX_DQL_LENGTH) return null;
       return { type: "reportDql", requestId: msg.requestId, dql: msg.dql };
+    }
+    case "applyFilter": {
+      const column = msg.column;
+      const op = msg.op;
+      const value = msg.value;
+      const search = msg.search;
+      if (column !== undefined && (typeof column !== "string" || (column !== "" && !validColumn(column)))) {
+        return null;
+      }
+      if (op !== undefined && (typeof op !== "string" || !(FILTER_OPS as readonly string[]).includes(op))) {
+        return null;
+      }
+      if (value !== undefined && (typeof value !== "string" || value.length > MAX_CELL_LENGTH)) return null;
+      if (search !== undefined && (typeof search !== "string" || search.length > MAX_CELL_LENGTH)) return null;
+      if (!Array.isArray(msg.columns) || msg.columns.length > 200) return null;
+      const columns: string[] = [];
+      for (const name of msg.columns) {
+        if (!validColumn(name)) return null;
+        columns.push(name);
+      }
+      return {
+        type: "applyFilter",
+        ...(typeof column === "string" && column.length > 0 ? { column } : {}),
+        ...(typeof op === "string" && op.length > 0 ? { op } : {}),
+        ...(typeof value === "string" ? { value } : {}),
+        ...(typeof search === "string" ? { search } : {}),
+        columns,
+      };
+    }
+    case "compareDatasets": {
+      if (!validColumn(msg.column) || !validColumn(msg.rightDatasetId)) return null;
+      return { type: "compareDatasets", rightDatasetId: msg.rightDatasetId, column: msg.column };
     }
     case "proposeEdit":
     case "applyEdit": {

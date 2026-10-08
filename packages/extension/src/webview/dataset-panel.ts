@@ -1,7 +1,10 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { ColumnMeta, Diagnostic, QueryResult, TrustMode } from "@data-pilot/contracts";
-import { formatCells } from "../format-cell";
+import type { ColumnMeta, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
+import { assertOpAllowed } from "@data-pilot/core";
+import { parseDql, ParseError } from "@data-pilot/dql";
+import { filterToDql } from "../filter-dql";
+import { formatCell, formatCells } from "../format-cell";
 import {
   type HostToWebviewMessage,
   type SerializedGrid,
@@ -10,6 +13,7 @@ import {
 import type { ExtensionEngineHost } from "../engine-host";
 import { writeExportArtifact } from "../export-writer";
 import { SavedQueryStore } from "../saved-query-store";
+import { rememberDatasetPath } from "../saved-query-tree";
 import {
   mergeIngestDiagnostics,
   planLooksRunnable,
@@ -135,10 +139,82 @@ function editorPanelHtml(
     <p class="hint" id="dql-formatted"></p>
     <p class="cost" id="cost"></p>
   </section>
+  <div class="editor-tabs">
+    <div class="tab-bar" role="tablist">
+      <button type="button" class="tab" id="tab-data" role="tab" aria-selected="true" aria-controls="panel-data">Data</button>
+      <button type="button" class="tab" id="tab-result" role="tab" aria-selected="false" aria-controls="panel-result">Result</button>
+      <button type="button" class="tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="panel-compare">Compare</button>
+      <button type="button" class="tab" id="tab-profile" role="tab" aria-selected="false" aria-controls="panel-profile">Profile</button>
+    </div>
+    <div id="panel-data" role="tabpanel">
   <section>
     <label id="grid-label">Preview</label>
-    <div class="table-wrap editor-table"><table id="grid"><thead></thead><tbody></tbody></table></div>
+    <div class="toolbar" id="grid-toolbar">
+      <label class="toolbar-label" for="filter-column">Filter</label>
+      <select id="filter-column"><option value="">Column</option></select>
+      <select id="filter-op">
+        <option value="">Op</option>
+        <option value="=">=</option>
+        <option value="!=">!=</option>
+        <option value=">">&gt;</option>
+        <option value="<">&lt;</option>
+        <option value=">=">&gt;=</option>
+        <option value="<=">&lt;=</option>
+        <option value="is null">is null</option>
+        <option value="is not null">is not null</option>
+      </select>
+      <input id="filter-value" type="text" placeholder="Value" />
+      <label class="toolbar-label" for="filter-search">Search</label>
+      <input id="filter-search" type="text" placeholder="Find in visible columns" />
+      <button id="apply-filter" type="button">Apply filter</button>
+      <details id="column-picker">
+        <summary>Columns</summary>
+        <div id="column-picker-body"></div>
+      </details>
+    </div>
+    <div class="table-wrap editor-table"><table id="grid" tabindex="0"><thead></thead><tbody></tbody></table></div>
   </section>
+    </div>
+    <div id="panel-result" role="tabpanel" hidden>
+      <p class="hint" id="result-empty">No query yet.</p>
+  <section id="result" hidden>
+    <label id="result-label">Result</label>
+    <div class="table-wrap editor-table"><table id="result-grid"><thead></thead><tbody></tbody></table></div>
+    <p class="hint" id="result-footer"></p>
+  </section>
+    </div>
+    <div id="panel-compare" role="tabpanel" hidden>
+  <section id="compare">
+    <label>Compare</label>
+    <p class="hint" id="compare-empty">Open another dataset to compare.</p>
+    <div class="row-actions" id="compare-controls" hidden>
+      <select id="compare-peer"><option value="">Choose dataset</option></select>
+      <select id="compare-column"><option value="">Key column</option></select>
+      <button id="compare-run" type="button">Compare</button>
+    </div>
+    <ul class="diag" id="compare-diagnostics"></ul>
+    <div id="compare-lists" hidden>
+      <p class="hint">Only in this file</p>
+      <ul id="compare-only-left"></ul>
+      <p class="hint">Only in the other file</p>
+      <ul id="compare-only-right"></ul>
+      <p class="hint">Changed</p>
+      <ul id="compare-changed"></ul>
+    </div>
+  </section>
+    </div>
+    <div id="panel-profile" role="tabpanel" hidden>
+  <section id="profile">
+    <label>Profile</label>
+    <p class="hint" id="profile-caption">These figures are from the describe sample, not the file.</p>
+    <div class="table-wrap schema-wrap">
+      <table id="profile-table"><thead><tr>
+        <th>Column</th><th>Type</th><th>Sample size</th><th>null</th><th>missing</th><th>Distinct</th><th>Min</th><th>Max</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+    </div>
+  </div>
   <section id="inspector">
     <div class="row-actions">
       <label>Inspector</label>
@@ -340,36 +416,6 @@ export function ensureDatasetViewSession(
 
 const panelSubscriptions = new WeakMap<vscode.WebviewPanel, vscode.Disposable>();
 
-/** Sidebar / Explorer webview — same UI as the custom editor, simpler lifecycle. */
-export function ensureExplorerViewSession(
-  view: vscode.WebviewView,
-  options: MountDatasetViewOptions,
-): DatasetViewSession {
-  const session = bindDatasetViewSession(
-    view,
-    {
-      webview: view.webview,
-      setTitle: (title) => {
-        view.title = title;
-      },
-    },
-    options,
-  );
-  if (!viewSubscriptions.has(view)) {
-    viewSubscriptions.set(
-      view,
-      view.onDidDispose(() => {
-        session.dispose();
-        viewSessions.delete(view);
-        viewSubscriptions.delete(view);
-      }),
-    );
-  }
-  return session;
-}
-
-const viewSubscriptions = new WeakMap<vscode.WebviewView, vscode.Disposable>();
-
 class DatasetViewSession {
   private readonly nonce: string;
   private currentFilePath: string | undefined;
@@ -390,6 +436,7 @@ class DatasetViewSession {
   private lastSessionPayload:
     | Extract<HostToWebviewMessage, { type: "session" }>
     | undefined;
+  private readonly peersSub: vscode.Disposable;
 
   constructor(
     private readonly surface: DatasetViewSurface,
@@ -413,6 +460,9 @@ class DatasetViewSession {
       options.layout ?? "explorer",
     );
     logInfo("Dataset webview HTML assigned after message listener");
+    this.peersSub = options.engine.onSessionsChanged(() => {
+      this.postComparePeers();
+    });
   }
 
   datasetPath(): string | undefined {
@@ -455,6 +505,7 @@ class DatasetViewSession {
     }
     this.fileWatcher?.dispose();
     this.fileWatcher = undefined;
+    this.peersSub.dispose();
   }
 
   /** View became visible again — retry posts that the webview could not accept. */
@@ -472,6 +523,33 @@ class DatasetViewSession {
 
   private get savedQueryStore(): SavedQueryStore {
     return this.options.savedQueryStore;
+  }
+
+  private postComparePeers(): void {
+    if (!this.datasetId) return;
+    const peers = this.engine
+      .listOpenSessions()
+      .filter((session) => session.datasetId !== this.datasetId)
+      .map((session) => ({
+        datasetId: session.datasetId,
+        label: path.basename(session.filePath),
+        columns: this.engine.columnNames(session.datasetId),
+      }));
+    this.post({ type: "comparePeers", peers });
+  }
+
+  private postCompareResult(result: KeyDiffResult): void {
+    this.post({
+      type: "compareResult",
+      completion: result.completion,
+      diagnostics: result.diagnostics,
+      onlyLeft: result.onlyLeft.map((key) => formatCell(key)),
+      onlyRight: result.onlyRight.map((key) => formatCell(key)),
+      changed: result.changed.map((row) => ({
+        key: formatCell(row.key),
+        columns: row.columns,
+      })),
+    });
   }
 
   private postInit(): void {
@@ -614,6 +692,7 @@ class DatasetViewSession {
       this.watchSourceFile(filePath);
       this.surface.setTitle(filePath.split(/[/\\]/).pop() ?? "Data Pilot");
       logInfo(`Posting dataset session (gen=${generation})`);
+      this.postComparePeers();
       this.post({
         type: "session",
         handle: session.handle,
@@ -777,8 +856,12 @@ class DatasetViewSession {
           });
           return;
         }
-        const saved = await this.engine.saveQuery(boundDatasetId(), msg.dql);
-        const queries = this.savedQueryStore.append(saved);
+        const datasetId = boundDatasetId();
+        const saved = await this.engine.saveQuery(datasetId, msg.dql);
+        const datasetPath = this.engine
+          .listOpenSessions()
+          .find((session) => session.datasetId === datasetId)?.filePath;
+        const queries = this.savedQueryStore.append(rememberDatasetPath(saved, datasetPath));
         this.post({ type: "savedQueries", queries });
         void vscode.window.showInformationMessage("Query saved to workspace state");
       } catch (err) {
@@ -833,6 +916,70 @@ class DatasetViewSession {
       } catch (err) {
         showErr(err);
       }
+      return;
+    }
+
+    if (msg.type === "compareDatasets") {
+      const leftId = this.datasetId;
+      if (!leftId) return;
+      const blocked = assertOpAllowed(
+        { trustMode: vscode.workspace.isTrusted ? "trusted" : "untrusted-limited" },
+        "compareDatasets",
+      );
+      if (blocked) {
+        this.postCompareResult({
+          completion: "error",
+          diagnostics: [blocked],
+          onlyLeft: [],
+          onlyRight: [],
+          changed: [],
+        });
+        return;
+      }
+      try {
+        const result = await this.engine.compareDatasets(leftId, msg.rightDatasetId, msg.column);
+        this.postCompareResult(result);
+      } catch (err) {
+        const message =
+          typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+        this.postCompareResult({
+          completion: "error",
+          diagnostics: [{ code: "compare-failed", severity: "error", message }],
+          onlyLeft: [],
+          onlyRight: [],
+          changed: [],
+        });
+      }
+      return;
+    }
+
+    if (msg.type === "applyFilter") {
+      const dql = filterToDql(msg);
+      if (!dql) return;
+      try {
+        parseDql(dql);
+      } catch (err) {
+        if (err instanceof ParseError) {
+          this.post({
+            type: "dqlPlan",
+            ok: false,
+            diagnostics: [
+              {
+                code: err.code,
+                severity: "error",
+                message: err.message,
+                range: err.span,
+              },
+            ],
+          });
+          return;
+        }
+        showErr(err);
+        return;
+      }
+      this.post({ type: "queryLoaded", dql });
       return;
     }
 

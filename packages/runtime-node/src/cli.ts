@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 /**
- * Headless bin: one-shot preview, describe, and query, an NDJSON session, or MCP.
- * Spawns one engine child. Does not edit, export, or call agentQuery.
+ * Headless bin: one-shot preview, describe, query, and export, an NDJSON session, or MCP.
+ * A cell edit writes the source file only with --apply. Does not call agentQuery.
  *
  *   npm run data-pilot -- preview fixtures/sample/tiny.csv
  *   npm run data-pilot -- query fixtures/sample/tiny.csv 'where country = "MX"'
+ *   npm run data-pilot -- export fixtures/sample/tiny.csv 'where country = "MX"' /tmp/mx.csv
+ *   npm run data-pilot -- edit fixtures/sample/tiny.csv 0 country CA --apply
  *   npm run data-pilot
  *   npm run data-pilot -- mcp
  */
 
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import type { Diagnostic, IpcResponse } from "@data-pilot/contracts";
 import { DatasetSession, resolveUserPath, type EngineResult, type OpenBody } from "./cli-engine.js";
+import { SOURCE_CHANGED_MESSAGE, sourceStillMatches } from "./source-snapshot.js";
 import { ChildProcessHost } from "./child-process-host.js";
 import { resolveTsWorkerEntry } from "./paths.js";
 
@@ -27,10 +31,12 @@ function usage(): void {
   data-pilot preview <file.csv|file.jsonl>
   data-pilot query <file> <dql> [--param name=value]...
   data-pilot describe <file>
+  data-pilot export <file> <dql> <out> [--format csv|jsonl] [--param name=value]...
+  data-pilot edit <file> <row> <column> <value> [--apply]
   data-pilot
       Read NDJSON actions (preview, describe, query, close) on stdin.
   data-pilot mcp
-      Serve preview, describe, and query over MCP stdio.`);
+      Serve preview, describe, query, export, and edit over MCP stdio.`);
 }
 
 /** Prefer npm's INIT_CWD so `npm run preview -- fixtures/...` works from repo root. */
@@ -45,6 +51,190 @@ function parseParamArgs(args: string[]): Record<string, string> {
     }
   }
   return params;
+}
+
+interface ExportArtifactBody {
+  format: "csv" | "jsonl";
+  content: string;
+  byteLength: number;
+  rowCount: number;
+  completion: string;
+}
+
+function parseExportFlags(args: string[]): {
+  format?: "csv" | "jsonl";
+  params: Record<string, string>;
+  error: boolean;
+} {
+  const params: Record<string, string> = {};
+  let format: "csv" | "jsonl" | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--format") {
+      const value = args[++i];
+      if (value !== "csv" && value !== "jsonl") return { params, error: true };
+      format = value;
+      continue;
+    }
+    if (arg === "--param" && args[i + 1]) {
+      const raw = args[++i]!;
+      const eq = raw.indexOf("=");
+      if (eq <= 0) return { params, error: true };
+      params[raw.slice(0, eq)] = raw.slice(eq + 1);
+      continue;
+    }
+    return { params, error: true };
+  }
+  return { ...(format !== undefined ? { format } : {}), params, error: false };
+}
+
+function exportSummary(outPath: string, artifact: ExportArtifactBody) {
+  return {
+    path: outPath,
+    format: artifact.format,
+    rowCount: artifact.rowCount,
+    byteLength: artifact.byteLength,
+    completion: artifact.completion,
+  };
+}
+
+async function runExport(args: string[]): Promise<number> {
+  const file = args[0];
+  const dql = args[1];
+  const out = args[2];
+  if (!file || !dql || !out) {
+    usage();
+    return 2;
+  }
+  const flags = parseExportFlags(args.slice(3));
+  if (flags.error) {
+    usage();
+    return 2;
+  }
+  const source = resolveUserPath(file);
+  const destination = resolveUserPath(out);
+  if (source === destination) {
+    console.error("Refusing to write the export onto the source file");
+    return 1;
+  }
+  const engine = new DatasetSession();
+  try {
+    await engine.start();
+    const outcome = await engine.exportQuery(file, dql, flags.params, flags.format);
+    if (!outcome.ok) {
+      console.error(outcome.message);
+      return 1;
+    }
+    const artifact = outcome.result as ExportArtifactBody;
+    if (typeof artifact.content !== "string") {
+      console.error("exportResult did not return content");
+      return 1;
+    }
+    await writeFile(destination, artifact.content, "utf8");
+    console.log(JSON.stringify(exportSummary(destination, artifact), null, 2));
+    return 0;
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    return 1;
+  } finally {
+    await engine.shutdown();
+  }
+}
+
+interface EditPreviewBody {
+  path: string;
+  rowIndex: number;
+  column: string;
+  oldRaw: string;
+  newRaw: string;
+  unifiedDiff: string;
+  afterText?: string;
+  sourceByteLength?: number;
+  sourceSha256?: string;
+}
+
+function parseEditArgs(args: string[]): {
+  file?: string;
+  rowIndex?: number;
+  column?: string;
+  newRaw?: string;
+  apply: boolean;
+  error: boolean;
+} {
+  let apply = false;
+  const positionals: string[] = [];
+  for (const arg of args) {
+    if (arg === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (arg.startsWith("--")) return { apply, error: true };
+    positionals.push(arg);
+  }
+  const file = positionals[0];
+  const rowRaw = positionals[1];
+  const column = positionals[2];
+  const newRaw = positionals[3];
+  if (!file || rowRaw === undefined || !column || newRaw === undefined || positionals.length !== 4) {
+    return { apply, error: true };
+  }
+  if (!/^\d+$/.test(rowRaw)) return { apply, error: true };
+  return { file, rowIndex: Number(rowRaw), column, newRaw, apply, error: false };
+}
+
+function editSummary(preview: EditPreviewBody, applied: boolean) {
+  return {
+    path: preview.path,
+    rowIndex: preview.rowIndex,
+    column: preview.column,
+    oldRaw: preview.oldRaw,
+    newRaw: preview.newRaw,
+    unifiedDiff: preview.unifiedDiff,
+    applied,
+  };
+}
+
+async function runEdit(args: string[]): Promise<number> {
+  const parsed = parseEditArgs(args);
+  if (parsed.error || !parsed.file || parsed.rowIndex === undefined || !parsed.column || parsed.newRaw === undefined) {
+    usage();
+    return 2;
+  }
+  const engine = new DatasetSession();
+  try {
+    await engine.start();
+    const outcome = await engine.editCell(
+      parsed.file,
+      parsed.rowIndex,
+      parsed.column,
+      parsed.newRaw,
+      parsed.apply,
+    );
+    if (!outcome.ok) {
+      console.error(outcome.message);
+      return 1;
+    }
+    const preview = outcome.result as EditPreviewBody;
+    if (parsed.apply) {
+      if (typeof preview.afterText !== "string") {
+        console.error("editFixture did not return file text");
+        return 1;
+      }
+      const destination = resolveUserPath(parsed.file);
+      if (!(await sourceStillMatches(destination, preview))) {
+        console.error(SOURCE_CHANGED_MESSAGE);
+        return 1;
+      }
+      await writeFile(destination, preview.afterText, "utf8");
+    }
+    console.log(JSON.stringify(editSummary(preview, parsed.apply), null, 2));
+    return 0;
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    return 1;
+  } finally {
+    await engine.shutdown();
+  }
 }
 
 function writeQueryFailure(diagnostics: Diagnostic[] | undefined): void {
@@ -69,6 +259,8 @@ async function runCommand(argv: string[]): Promise<number> {
   }
   if (!cmd) return runSession();
   if (cmd === "mcp") return runMcp();
+  if (cmd === "export") return runExport(argv.slice(1));
+  if (cmd === "edit") return runEdit(argv.slice(1));
   if (cmd !== "preview" && cmd !== "describe" && cmd !== "query") {
     usage();
     return 2;
@@ -327,6 +519,36 @@ const MCP_TOOLS = [
       required: ["path", "dql"],
     },
   },
+  {
+    name: "export",
+    description: "Write a bounded DQL 0.1 result to a new file. Does not modify the source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        dql: { type: "string" },
+        out: { type: "string" },
+        format: { type: "string", enum: ["csv", "jsonl"] },
+        params: { type: "object", additionalProperties: { type: "string" } },
+      },
+      required: ["path", "dql", "out"],
+    },
+  },
+  {
+    name: "edit",
+    description: "Preview a one-cell change. Writes the source file only when apply is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        rowIndex: { type: "integer", minimum: 0 },
+        column: { type: "string" },
+        newRaw: { type: "string" },
+        apply: { type: "boolean" },
+      },
+      required: ["path", "rowIndex", "column", "newRaw"],
+    },
+  },
 ] as const;
 
 function writeRpc(message: unknown): void {
@@ -371,17 +593,118 @@ async function runMcp(): Promise<number> {
     return 1;
   }
 
+  async function callExport(id: string | number | null, args: Record<string, unknown>): Promise<void> {
+    if (typeof args.path !== "string" || typeof args.dql !== "string" || typeof args.out !== "string") {
+      toolResult(id, "export requires path, dql, and out", true);
+      return;
+    }
+    if (args.path.length === 0 || args.out.length === 0) {
+      toolResult(id, "export requires path, dql, and out", true);
+      return;
+    }
+    let format: "csv" | "jsonl" | undefined;
+    if (args.format !== undefined) {
+      if (args.format !== "csv" && args.format !== "jsonl") {
+        toolResult(id, "format must be csv or jsonl", true);
+        return;
+      }
+      format = args.format;
+    }
+    const params = readParams(args.params);
+    if (params === "bad") {
+      toolResult(id, "params must be an object of strings", true);
+      return;
+    }
+    const source = resolveUserPath(args.path);
+    const destination = resolveUserPath(args.out);
+    if (source === destination) {
+      toolResult(id, "Refusing to write the export onto the source file", true);
+      return;
+    }
+    const outcome = await engine.exportQuery(args.path, args.dql, params, format);
+    if (!outcome.ok) {
+      toolResult(id, outcome.message, true);
+      if (outcome.fatal) await finish(1);
+      return;
+    }
+    const artifact = outcome.result as ExportArtifactBody;
+    if (typeof artifact.content !== "string") {
+      toolResult(id, "exportResult did not return content", true);
+      return;
+    }
+    try {
+      await writeFile(destination, artifact.content, "utf8");
+    } catch (err) {
+      toolResult(id, err instanceof Error ? err.message : String(err), true);
+      return;
+    }
+    toolResult(id, JSON.stringify(exportSummary(destination, artifact)), false);
+  }
+
+  async function callEdit(id: string | number | null, args: Record<string, unknown>): Promise<void> {
+    if (typeof args.path !== "string" || args.path.length === 0) {
+      toolResult(id, "edit requires path", true);
+      return;
+    }
+    if (typeof args.rowIndex !== "number" || !Number.isInteger(args.rowIndex) || args.rowIndex < 0) {
+      toolResult(id, "rowIndex must be an integer >= 0", true);
+      return;
+    }
+    if (typeof args.column !== "string" || args.column.length === 0 || typeof args.newRaw !== "string") {
+      toolResult(id, "edit requires column and newRaw", true);
+      return;
+    }
+    if (args.apply !== undefined && typeof args.apply !== "boolean") {
+      toolResult(id, "apply must be a boolean", true);
+      return;
+    }
+    const apply = args.apply === true;
+    const outcome = await engine.editCell(args.path, args.rowIndex, args.column, args.newRaw, apply);
+    if (!outcome.ok) {
+      toolResult(id, outcome.message, true);
+      if (outcome.fatal) await finish(1);
+      return;
+    }
+    const preview = outcome.result as EditPreviewBody;
+    if (apply) {
+      if (typeof preview.afterText !== "string") {
+        toolResult(id, "editFixture did not return file text", true);
+        return;
+      }
+      const destination = resolveUserPath(args.path);
+      if (!(await sourceStillMatches(destination, preview))) {
+        toolResult(id, SOURCE_CHANGED_MESSAGE, true);
+        return;
+      }
+      try {
+        await writeFile(destination, preview.afterText, "utf8");
+      } catch (err) {
+        toolResult(id, err instanceof Error ? err.message : String(err), true);
+        return;
+      }
+    }
+    toolResult(id, JSON.stringify(editSummary(preview, apply)), false);
+  }
+
   async function callTool(id: string | number | null, name: string, args: Record<string, unknown>): Promise<void> {
-    if (name === "edit" || name === "export" || name === "compare" || name === "agentQuery") {
+    if (name === "compare" || name === "agentQuery") {
       toolResult(id, `Tool '${name}' is not available`, true);
       return;
     }
-    if (name !== "preview" && name !== "describe" && name !== "query") {
+    if (name !== "preview" && name !== "describe" && name !== "query" && name !== "export" && name !== "edit") {
       toolResult(id, `Unknown tool '${name}'`, true);
       return;
     }
     if (typeof args.path !== "string" || args.path.length === 0) {
       toolResult(id, `${name} requires path`, true);
+      return;
+    }
+    if (name === "export") {
+      await callExport(id, args);
+      return;
+    }
+    if (name === "edit") {
+      await callEdit(id, args);
       return;
     }
     let outcome: EngineResult;

@@ -6,11 +6,8 @@ import {
 } from "./dataset-custom-editor";
 import { ExtensionEngineHost, workspaceTrustMode } from "./engine-host";
 import { openDatasetUri } from "./open-dataset";
-import {
-  DATA_PILOT_EXPLORER_VIEW_ID,
-  DatasetExplorerWebviewProvider,
-} from "./dataset-explorer-view";
 import { DatasetTreeProvider } from "./dataset-tree";
+import { SavedQueryTreeProvider } from "./saved-query-view";
 import { registerDqlEditor } from "./dql-editor";
 import { dataPilotLog, logError, logInfo } from "./log";
 import { SavedQueryStore } from "./saved-query-store";
@@ -43,14 +40,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
   );
 
-  const explorerView = new DatasetExplorerWebviewProvider(context, engine, savedQueryStore);
   const datasetsTree = new DatasetTreeProvider(engine);
+  const savedQueriesTree = new SavedQueryTreeProvider(savedQueryStore);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(DATA_PILOT_EXPLORER_VIEW_ID, explorerView, {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
     vscode.window.registerTreeDataProvider("dataPilot.datasets", datasetsTree),
     datasetsTree,
+    vscode.window.registerTreeDataProvider("dataPilot.savedQueries", savedQueriesTree),
+    savedQueriesTree,
   );
 
   const rememberOpenDatasetTabs = async (): Promise<void> => {
@@ -77,16 +73,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
-  let syncEditorTimer: ReturnType<typeof setTimeout> | undefined;
   let tabTimer: ReturnType<typeof setTimeout> | undefined;
   context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (!explorerView.hasSession()) return;
-      if (syncEditorTimer) clearTimeout(syncEditorTimer);
-      syncEditorTimer = setTimeout(() => {
-        explorerView.syncFromActiveEditor(editor);
-      }, 300);
-    }),
     vscode.window.tabGroups.onDidChangeTabs(() => {
       if (tabTimer) clearTimeout(tabTimer);
       tabTimer = setTimeout(() => {
@@ -98,7 +86,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openFromUri = async (uri: vscode.Uri): Promise<void> => {
     if (!engine || !savedQueryStore) return;
-    await openDatasetUri(engine, context, savedQueryStore, uri, explorerView);
+    await openDatasetUri(engine, context, savedQueryStore, uri);
   };
 
   const openCmd = vscode.commands.registerCommand("dataPilot.openDataset", async () => {
@@ -147,25 +135,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
       if (!engine || !savedQueryStore) return;
-      await openDatasetUri(engine, context, savedQueryStore, target, explorerView, "custom-editor");
+      await openDatasetUri(engine, context, savedQueryStore, target);
     },
   );
 
-  const refreshPreviewCmd = vscode.commands.registerCommand(
-    "dataPilot.refreshExplorerPreview",
-    async () => {
-      const uri = vscode.window.activeTextEditor?.document.uri;
-      if (!uri || !isDatasetUri(uri)) {
-        void vscode.window.showInformationMessage("Focus a CSV or JSONL editor tab to refresh.");
-        return;
-      }
-      await explorerView.loadDataset(uri.fsPath, { force: true });
-    },
-  );
+  registerDqlEditor(context, engine);
 
-  registerDqlEditor(context, engine, () => explorerView.querySurface());
-
-  context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd, refreshPreviewCmd);
+  context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd);
   context.subscriptions.push({
     dispose: () => {
       void engine?.stop();

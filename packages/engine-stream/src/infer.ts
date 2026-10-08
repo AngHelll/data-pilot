@@ -1,5 +1,6 @@
 import type { ColumnMeta, DataValue, InferredType } from "@data-pilot/contracts";
 import { classifySample } from "./cell.js";
+import { cmpValues } from "./execute.js";
 
 type Bucket = {
   name: string;
@@ -7,6 +8,9 @@ type Bucket = {
   nullCount: number;
   missingCount: number;
   sampleSize: number;
+  distinct: Set<string>;
+  minNumeric?: DataValue;
+  maxNumeric?: DataValue;
 };
 
 export function createInferenceBuckets(names: string[]): Bucket[] {
@@ -16,6 +20,7 @@ export function createInferenceBuckets(names: string[]): Bucket[] {
     nullCount: 0,
     missingCount: 0,
     sampleSize: 0,
+    distinct: new Set(),
   }));
 }
 
@@ -38,6 +43,15 @@ export function observeValue(bucket: Bucket, v: DataValue): void {
     return;
   }
   bucket.kinds.add(v.kind);
+  bucket.distinct.add(JSON.stringify(v));
+  if (v.kind === "integer" || v.kind === "decimal") {
+    if (!bucket.minNumeric || cmpValues("<", v, bucket.minNumeric) === true) {
+      bucket.minNumeric = v;
+    }
+    if (!bucket.maxNumeric || cmpValues(">", v, bucket.maxNumeric) === true) {
+      bucket.maxNumeric = v;
+    }
+  }
 }
 
 export function finalizeColumns(buckets: Bucket[]): ColumnMeta[] {
@@ -59,12 +73,25 @@ export function finalizeColumns(buckets: Bucket[]): ColumnMeta[] {
       inferredType = "mixed";
     }
 
+    const numeric = inferredType === "integer" || inferredType === "decimal";
+    const min =
+      numeric && b.minNumeric && (b.minNumeric.kind === "integer" || b.minNumeric.kind === "decimal")
+        ? b.minNumeric.value
+        : undefined;
+    const max =
+      numeric && b.maxNumeric && (b.maxNumeric.kind === "integer" || b.maxNumeric.kind === "decimal")
+        ? b.maxNumeric.value
+        : undefined;
+
     return {
       name: b.name,
       inferredType,
       nullCountSample: b.nullCount,
       missingCountSample: b.missingCount,
       sampleSize: b.sampleSize,
+      distinctCountSample: b.distinct.size,
+      ...(min !== undefined ? { minSample: min } : {}),
+      ...(max !== undefined ? { maxSample: max } : {}),
     };
   });
 }

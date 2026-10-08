@@ -153,10 +153,18 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 
 **Recomendación: B, con turno en la fase 7.** El diseño queda registrado. No se implementa dentro de las fases 5 ni 6.
 
-- El camino verificado de v0.1 sigue siendo texto + panel Explorer (`dataPilot.explorer`). El custom editor (`dataPilot.dataset`, prioridad `option`) es opcional y queda fuera de ese cierre.
+- Un CSV abierto como texto sigue siendo texto. Datasets lo lista. El schema está en el editor central (`dataPilot.dataset`, prioridad `option`). No hay asociación por defecto de `*.csv`.
 - `DatasetStore` guarda varias sesiones por `datasetId`. Las specs 1, 2 y 3 de la fase 7 están verificadas: ownership, Activity Bar con tabla central e inspector, y el editor DQL nativo.
 - No hay `CustomDocument` con save/undo/revert. La fase 7 conserva Preview diff + Apply save (escritura solo en el host), budgets, trust y DQL `where`.
 - El editor DQL nativo (`.dql`, `data-pilot-dql`) es la spec 3 de la fase 7 y está verificada. El enlace al dataset es explícito.
+- La spec 4 está verificada: Saved Queries en el Activity Bar. Al guardar se recuerda el path y al elegir la fila se abre un `.dql` enlazado.
+- La spec 5 está verificada: `dataPilot.explorer` salió. Open Dataset abre el editor central.
+- La spec 6 está verificada: filtros visuales, búsqueda, columnas ocultas, flechas y anchos en el editor central. Apply no ejecuta.
+- La spec 7 está verificada: Compare en el editor entre dos datasets abiertos.
+- La spec 8 está verificada: Run pinta un resultado debajo del preview y no sustituye la tabla del archivo.
+- La spec 9 está verificada: Data, Result y Compare son pestañas del editor para que la tabla del archivo siga a la vista.
+- La spec 10 está verificada: Profile muestra hechos de la muestra de describe, no un scan del archivo. Jobs, el LSP y asociar `*.csv` siguen fuera.
+- La spec 11 está verificada: Apply save no escribe si el archivo cambió después de la lectura del hijo. Sin lock. El bin y MCP no se reabren. Jobs, el LSP, asociar `*.csv`, `sort` y una fase 9 siguen fuera.
 - Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

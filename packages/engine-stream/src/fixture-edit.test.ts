@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyCellEdit, previewCellEdit } from "./fixture-edit.js";
+import { applyCellEdit, hashSourceText, previewCellEdit } from "./fixture-edit.js";
 
 const tinyHeader = ["id", "name", "country"];
 
@@ -26,6 +26,8 @@ test("fixture edit previews and applies CSV cell change", async () => {
   const preview = await previewCellEdit(target, "CA");
   assert.match(preview.unifiedDiff, /\+ .*CA/);
   assert.equal(preview.oldRaw, "MX");
+  assert.equal(preview.sourceByteLength, (await fs.stat(file)).size);
+  assert.equal(preview.sourceSha256, hashSourceText(before));
   assert.equal(await fs.readFile(file, "utf8"), before);
   const planned = await applyCellEdit(target, "CA");
   assert.match(planned.afterText, /Ada,CA/);

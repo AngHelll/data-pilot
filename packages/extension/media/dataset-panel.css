@@ -64,6 +64,29 @@ input.cell-edit {
 }
 #inspect-detail { font-size: 0.9rem; margin-top: 4px; }
 body[data-layout="editor"] .editor-table { max-height: none; min-height: 240px; }
+body[data-layout="editor"] #grid { width: max-content; min-width: 100%; }
+body[data-layout="editor"] #grid th { min-width: 4.5rem; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.toolbar-label { margin: 0; font-weight: 600; }
+#compare select,
+.toolbar select, .toolbar input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  padding: 4px 8px;
+}
+.toolbar button { margin-top: 0; }
+#column-picker { margin-left: auto; }
+#column-picker-body { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+.col-check { font-weight: 400; margin: 0; }
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
 body[data-layout="editor"] .editor-footer {
   margin-top: 12px;
   padding-top: 8px;
@@ -74,3 +97,13 @@ body[data-layout="editor"].inspector-collapsed #inspector-body { display: none; 
 body[data-layout="editor"] details { margin-top: 12px; }
 body[data-layout="editor"] summary { cursor: pointer; font-weight: 600; }
 body[data-layout="editor"] #inspector label { margin: 0; }
+.tab-bar { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--vscode-panel-border); }
+.tab-bar .tab {
+  margin-top: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.tab-bar .tab[aria-selected="true"] { border-bottom-color: var(--vscode-focusBorder); font-weight: 600; }
