@@ -107,6 +107,11 @@ export interface QueryResult {
   columns: string[];
   rows: DataValue[][];
   rowCountReturned: number;
+  /**
+   * File row of each returned data row, in order. Present only when every
+   * returned row was read from the source. A count has no locator.
+   */
+  sourceRowIndexes?: number[];
   /** Exact only when completion === "complete" and operation is count/full scan. */
   totalCount?: number;
   completion: CompletionState;

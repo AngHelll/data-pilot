@@ -11,6 +11,18 @@ function empty(diagnostics: Diagnostic[], completion: KeyDiffResult["completion"
   return { completion, diagnostics, onlyLeft: [], onlyRight: [], changed: [] };
 }
 
+async function staleSides(
+  store: DatasetStore,
+  leftId: string,
+  rightId: string,
+): Promise<KeyDiffResult | null> {
+  const left = await store.assertFresh(leftId);
+  const right = await store.assertFresh(rightId);
+  const diagnostics = [left, right].filter((item): item is Diagnostic => item !== null);
+  if (diagnostics.length === 0) return null;
+  return empty(diagnostics, "error");
+}
+
 function same(a: DataValue, b: DataValue): boolean {
   return cmpValues("=", a, b) === true;
 }
@@ -92,8 +104,13 @@ export async function compareByKey(
     );
   }
 
+  const opened = await staleSides(store, leftId, rightId);
+  if (opened) return opened;
+
   const left = await readSide(store, leftId, column, leftHeader, budget);
   const right = await readSide(store, rightId, column, rightHeader, budget);
+  const closed = await staleSides(store, leftId, rightId);
+  if (closed) return closed;
   if (left.truncated || right.truncated) {
     return empty(
       [

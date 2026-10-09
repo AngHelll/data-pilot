@@ -126,6 +126,23 @@ export class DatasetStore {
     return null;
   }
 
+  /** A finished scan still has to be the revision that was opened. */
+  async seal(datasetId: string, result: QueryResult): Promise<QueryResult> {
+    const moved = await this.assertFresh(datasetId);
+    if (!moved) return result;
+    return {
+      requestId: result.requestId,
+      datasetId,
+      revisionId: result.revisionId,
+      columns: result.columns,
+      rows: [],
+      rowCountReturned: 0,
+      completion: "error",
+      scope: "unknown",
+      diagnostics: [moved],
+    };
+  }
+
   describe(datasetId: string): {
     handle: DatasetHandle;
     diagnostics: Diagnostic[];
@@ -172,7 +189,7 @@ export class DatasetStore {
       r.values.map((v, i) => promotePreviewValue(v, r.raw[i] ?? "", s.handle.columns[i]?.inferredType)),
     );
 
-    return {
+    return this.seal(datasetId, {
       requestId,
       datasetId,
       revisionId: s.handle.revision.revisionId,
@@ -188,7 +205,7 @@ export class DatasetStore {
       diagnostics: [...s.diagnostics, ...sample.diagnostics],
       scannedBytes: sample.bytesRead,
       scannedRows: rows.length,
-    };
+    });
   }
 
   async *iterate(
@@ -224,29 +241,35 @@ export class DatasetStore {
         message: `Unknown column '${column}'`,
       };
     }
+    let found: { value: DataValue; raw: string; inferredType: string } | undefined;
     let i = 0;
     for await (const row of this.iterate(datasetId)) {
       if (i === rowIndex) {
         const raw = row.raw[colIdx] ?? "";
-        const value = promotePreviewValue(
-          row.values[colIdx]!,
-          raw,
-          s.handle.columns[colIdx]?.inferredType,
-        );
-        return {
-          value,
+        found = {
+          value: promotePreviewValue(
+            row.values[colIdx]!,
+            raw,
+            s.handle.columns[colIdx]?.inferredType,
+          ),
           raw,
           inferredType: s.handle.columns[colIdx]?.inferredType ?? "unknown",
         };
+        break;
       }
       i += 1;
       if (i > rowIndex) break;
     }
-    return {
-      code: "row-out-of-range",
-      severity: "error",
-      message: `Row index ${rowIndex} is out of range for inspected prefix`,
-    };
+    const moved = await this.assertFresh(datasetId);
+    if (moved) return moved;
+    if (!found) {
+      return {
+        code: "row-out-of-range",
+        severity: "error",
+        message: `Row index ${rowIndex} is out of range for inspected prefix`,
+      };
+    }
+    return found;
   }
 
   editTarget(datasetId: string, rowIndex: number, column: string): CellEditTarget {

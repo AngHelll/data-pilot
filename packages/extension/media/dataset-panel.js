@@ -17,6 +17,8 @@
     let lastResult = null;
     let editorTab = "data";
     let hasResult = false;
+    let queryOk = false;
+    let queryRunning = false;
     const hiddenColumns = new Set();
     const columnWidths = new Map();
 
@@ -194,6 +196,7 @@
       if (peers.some((peer) => peer.datasetId === previous)) els.comparePeer.value = previous;
       fillCompareColumns();
       if (els.compareRun) els.compareRun.disabled = !canCompare;
+      syncSurfaceTabs();
     }
 
     function renderCompareResult(msg) {
@@ -247,6 +250,19 @@
 
     function renderIngestDiagnostics(items) {
       renderDiagnosticList(els.ingestDiagnostics, els.ingestEmpty, items, false);
+      const details = document.getElementById("ingest-details");
+      if (details) details.hidden = !(items && items.length);
+    }
+
+    function syncSurfaceTabs() {
+      if (document.body.dataset.layout !== "editor") return;
+      if (els.tabResult) els.tabResult.hidden = !hasResult;
+      if (els.tabCompare) els.tabCompare.hidden = comparePeers.length === 0;
+      const pending = document.getElementById("changes-diff");
+      const changesOn = !!(pending && !pending.hidden && pending.textContent.trim());
+      if (els.tabChanges) els.tabChanges.hidden = !changesOn;
+      const current = { result: els.tabResult, compare: els.tabCompare, changes: els.tabChanges }[editorTab];
+      if (current && current.hidden) showEditorTab("data");
     }
 
     function renderDqlDiagnostics(items) {
@@ -262,8 +278,10 @@
       planTimer = setTimeout(() => {
         const dql = els.dql.value.trim();
         if (!dql) {
+          queryOk = false;
           renderDqlDiagnostics([]);
           text(els.dqlFormatted, "");
+          syncQueryActionButtons();
           return;
         }
         vscode.postMessage({ type: "planDql", dql });
@@ -367,14 +385,24 @@
       text(footer, "");
     }
 
+    function shownRange(grid) {
+      const shown = grid.rows ? grid.rows.length : grid.rowCountReturned;
+      if (!shown) return "showing 0";
+      if (grid.totalCount !== undefined) return "showing 1–" + shown + " of " + grid.totalCount;
+      if (grid.completion === "complete") return "showing 1–" + shown + " of " + shown;
+      return "showing " + shown;
+    }
+
+    function rowsReturned(n) {
+      return n + (n === 1 ? " row returned" : " rows returned");
+    }
+
     function previewFooter(grid) {
-      const foot = ["Preview", grid.rowCountReturned + " rows", grid.completion];
-      if (grid.totalCount !== undefined) foot.push("total " + grid.totalCount);
-      return foot.join(" · ");
+      return ["Preview", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)].join(" · ");
     }
 
     function resultLine(grid) {
-      return "Result · " + grid.rowCountReturned + " rows · " + grid.completion;
+      return ["Result", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)].join(" · ");
     }
 
     function clearResult() {
@@ -389,6 +417,8 @@
       const tbody = els.resultGrid && els.resultGrid.querySelector("tbody");
       if (thead) thead.replaceChildren();
       if (tbody) tbody.replaceChildren();
+      syncQueryActionButtons();
+      syncSurfaceTabs();
       syncEditorFooter();
     }
 
@@ -417,9 +447,17 @@
         index.className = "num";
         text(index, String(ri));
         tr.appendChild(index);
-        row.forEach((cell) => {
+        row.forEach((cell, ci) => {
+          const col = grid.columns[ci] || "";
           const td = document.createElement("td");
-          text(td, cell);
+          paintCell(td, cell, col);
+          td.dataset.row = String(ri);
+          td.dataset.col = col;
+          const source = grid.sourceRowIndexes && Number.isInteger(grid.sourceRowIndexes[ri])
+            ? grid.sourceRowIndexes[ri]
+            : null;
+          if (source != null) td.dataset.sourceRow = String(source);
+          td.addEventListener("click", () => selectCell(ri, col, cell, td, source));
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -427,6 +465,8 @@
       if (els.resultFooter) text(els.resultFooter, resultLine(grid));
       hasResult = true;
       syncResultIdentity();
+      syncQueryActionButtons();
+      syncSurfaceTabs();
       syncEditorFooter();
     }
 
@@ -458,16 +498,18 @@
         pre.hidden = true;
         text(pre, "");
         text(empty, "No pending change.");
+        syncSurfaceTabs();
         return;
       }
       empty.hidden = true;
       pre.hidden = false;
       text(pre, value);
+      syncSurfaceTabs();
     }
 
     function renderGrid(grid) {
       lastGrid = grid;
-      text(els.gridLabel, "Preview sample");
+      if (els.gridLabel) text(els.gridLabel, "Preview sample");
       const thead = els.grid.querySelector("thead");
       const tbody = els.grid.querySelector("tbody");
       thead.replaceChildren();
@@ -518,11 +560,11 @@
           const col = grid.columns[ci] || "";
           if (!shown.has(col)) return;
           const td = document.createElement("td");
-          td.className = "cell";
-          text(td, cell);
+          paintCell(td, cell, col);
           td.dataset.row = String(ri);
           td.dataset.col = col;
-          td.addEventListener("click", () => selectCell(ri, col, cell, td));
+          td.dataset.sourceRow = String(ri);
+          td.addEventListener("click", () => selectCell(ri, col, cell, td, ri));
           tr.appendChild(td);
         });
         tr.insertBefore((() => {
@@ -568,25 +610,168 @@
       return "sample · total unknown";
     }
 
+    function applyDatasetColor(token) {
+      const dot = document.getElementById("dataset-color");
+      const known = token === "charts.blue" || token === "charts.green" || token === "charts.orange" || token === "charts.purple" || token === "charts.red" || token === "charts.yellow";
+      if (!known) {
+        document.body.style.removeProperty("--dataset-color");
+        if (dot) dot.hidden = true;
+        return;
+      }
+      document.body.style.setProperty("--dataset-color", "var(--vscode-" + token.replace(".", "-") + ")");
+      if (dot) dot.hidden = false;
+    }
+
     function renderEditorSummary(handle, preview) {
       const formatEl = document.getElementById("editor-format");
       if (!formatEl || !handle) return;
       const size = handle.revision ? formatBytes(handle.revision.sizeBytes) : "";
-      text(formatEl, [handle.format, size, editorFileCount(preview)].filter(Boolean).join(" · "));
+      const columns = preview && preview.columns ? preview.columns.length + " columns" : "";
+      text(formatEl, [handle.format, size, editorFileCount(preview), columns].filter(Boolean).join(" · "));
     }
 
-    function selectCell(rowIndex, column, display, td) {
-      for (const el of els.grid.querySelectorAll("td.cell.selected")) {
+    let cellEditor = null;
+    let pendingConfirm = null;
+    let inspectReady = false;
+
+    function inferredOf(name) {
+      const found = columnTypes.find((col) => col && col.name === name);
+      return found ? found.inferredType : "";
+    }
+
+    function paintCell(td, display, name) {
+      td.className = "cell";
+      if (display === "null") td.classList.add("cell-null");
+      else if (display === "·") td.classList.add("cell-missing");
+      else {
+        const kind = inferredOf(name);
+        if (
+          kind === "string" || kind === "integer" || kind === "decimal" ||
+          kind === "boolean" || kind === "date" || kind === "datetime"
+        ) {
+          td.classList.add("cell-type-" + kind);
+        }
+      }
+      text(td, display);
+    }
+
+    function closeCellEditor() {
+      if (!cellEditor) return;
+      const td = cellEditor.parentElement;
+      const display = selected ? selected.display : "";
+      const name = selected ? selected.column : "";
+      cellEditor = null;
+      if (td) {
+        paintCell(td, display, name);
+        td.classList.add("selected");
+      }
+    }
+
+    function beginCellEdit() {
+      if (!canEdit || !selected || selected.rowIndex == null) return;
+      const td = document.querySelector("td.cell.selected");
+      if (!td || cellEditor) return;
+      const input = document.createElement("input");
+      input.className = "cell-editor";
+      input.value = selected.display === "null" || selected.display === "·" ? "" : selected.display;
+      td.replaceChildren(input);
+      cellEditor = input;
+      input.focus();
+      input.select();
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeCellEditor();
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          const next = input.value;
+          const previous = selected.display === "null" || selected.display === "·" ? "" : selected.display;
+          closeCellEditor();
+          if (next === previous) return;
+          pendingConfirm = { rowIndex: selected.rowIndex, column: selected.column, newRaw: next };
+          vscode.postMessage({
+            type: "proposeEdit",
+            rowIndex: selected.rowIndex,
+            column: selected.column,
+            newRaw: next,
+          });
+        }
+      });
+    }
+
+    function confirmPendingEdit() {
+      if (!pendingConfirm || !canEdit) return;
+      const edit = pendingConfirm;
+      pendingConfirm = null;
+      vscode.postMessage({
+        type: "applyEdit",
+        rowIndex: edit.rowIndex,
+        column: edit.column,
+        newRaw: edit.newRaw,
+      });
+    }
+
+    function copyActive(rowMode) {
+      const grid = editorTab === "result" && lastResult ? lastResult : lastGrid;
+      if (!selectedPos || !grid || !selected) return;
+      if (rowMode) {
+        const names = visibleNames(grid.columns);
+        const row = grid.rows[selectedPos.row] || [];
+        const line = names.map((name) => {
+          const ci = grid.columns.indexOf(name);
+          return row[ci] == null ? "" : String(row[ci]);
+        }).join("\t");
+        vscode.postMessage({ type: "copyText", text: line });
+        return;
+      }
+      const raw = inspectReady ? inspectRaw : (selected.display === "·" ? "" : selected.display);
+      vscode.postMessage({ type: "copyText", text: raw });
+    }
+
+    function paintInspector(column, type, raw, pending) {
+      const colEl = document.getElementById("inspect-column");
+      const typeEl = document.getElementById("inspect-type");
+      const rawEl = document.getElementById("inspect-raw");
+      if (colEl) text(colEl, column || "—");
+      if (typeEl) {
+        const label = !type || pending ? "…" : type.charAt(0).toUpperCase() + type.slice(1);
+        text(typeEl, label);
+      }
+      if (rawEl) text(rawEl, pending ? "…" : String(raw));
+    }
+
+    function selectCell(viewRow, column, display, td, sourceRow) {
+      closeCellEditor();
+      pendingConfirm = null;
+      inspectReady = false;
+      inspectRaw = "";
+      for (const el of document.querySelectorAll("td.cell.selected")) {
         el.classList.remove("selected");
       }
       td.classList.add("selected");
-      selected = { rowIndex, column, display };
-      selectedPos = { row: rowIndex, column };
+      selected = { rowIndex: sourceRow, column, display };
+      selectedPos = { row: viewRow, column, sourceRow };
       els.editValue.value = display === "null" || display === "·" ? "" : display;
-      text(els.inspectDetail, "Loading…");
       text(els.editDiff, "");
+      if (sourceRow == null) {
+        if (document.getElementById("inspect-column")) paintInspector(column, "", "", true);
+        text(els.inspectDetail, "This result does not point at a file row.");
+        setEditEnabled(false);
+        syncInspector();
+        return;
+      }
+      setEditEnabled(canEdit);
+      if (document.getElementById("inspect-column")) {
+        paintInspector(column, "", "", true);
+        text(els.inspectDetail, "");
+      } else {
+        text(els.inspectDetail, "Loading…");
+      }
       syncInspector();
-      vscode.postMessage({ type: "inspectCell", rowIndex, column });
+      vscode.postMessage({ type: "inspectCell", rowIndex: sourceRow, column });
     }
 
     function setEditEnabled(on) {
@@ -605,8 +790,30 @@
     }
 
     function syncQueryActionButtons() {
-      els.saveQuery.disabled = !canExecuteQuery;
-      els.exportQuery.disabled = !canExport;
+      const editor = document.body.dataset.layout === "editor";
+      const textOk = !!(els.dql && els.dql.value.trim() && queryOk);
+      if (editor) {
+        const saveOn = canExecuteQuery && textOk && !queryRunning;
+        if (els.saveQuery) {
+          els.saveQuery.hidden = !saveOn;
+          els.saveQuery.disabled = !saveOn;
+        }
+        const actions = document.getElementById("query-actions");
+        if (actions) actions.hidden = !saveOn;
+        if (els.cancel) {
+          els.cancel.hidden = !queryRunning;
+          els.cancel.disabled = !queryRunning;
+        }
+        if (els.exportQuery) {
+          const exportOn = canExport && hasResult && !queryRunning;
+          els.exportQuery.hidden = !exportOn;
+          els.exportQuery.disabled = !exportOn;
+        }
+        return;
+      }
+      if (els.saveQuery) els.saveQuery.disabled = !canExecuteQuery || queryRunning;
+      if (els.exportQuery) els.exportQuery.disabled = !canExport || queryRunning;
+      if (els.cancel) els.cancel.disabled = !queryRunning;
       if (els.savedQueries) els.savedQueries.disabled = !canExecuteQuery;
     }
 
@@ -648,8 +855,26 @@
         'td.cell[data-row="' + ri + '"][data-col="' + CSS.escape(name) + '"]',
       );
       if (!td || sourceIndex < 0) return;
-      selectCell(ri, name, lastGrid.rows[ri][sourceIndex], td);
+      selectCell(ri, name, lastGrid.rows[ri][sourceIndex], td, ri);
       td.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+
+    document.addEventListener("keydown", (event) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c" && !typing && selectedPos) {
+        event.preventDefault();
+        copyActive(event.shiftKey);
+        return;
+      }
+      const active = document.activeElement;
+      const inGrid = !active || active === document.body ||
+        (els.grid && (active === els.grid || els.grid.contains(active))) ||
+        (els.resultGrid && (active === els.resultGrid || els.resultGrid.contains(active)));
+      if (event.key !== "Enter" || typing || !inGrid || !selectedPos) return;
+      event.preventDefault();
+      if (pendingConfirm) confirmPendingEdit();
+      else beginCellEdit();
     });
 
     const applyFilter = document.getElementById("apply-filter");
@@ -661,32 +886,54 @@
         filterValue.disabled = nullOp;
       });
     }
-    if (applyFilter) {
-      applyFilter.addEventListener("click", () => {
-        const columnEl = document.getElementById("filter-column");
-        const column = columnEl ? columnEl.value : "";
-        const op = filterOp ? filterOp.value : "";
-        const value = filterValue ? filterValue.value : "";
-        const searchEl = document.getElementById("filter-search");
-        const search = searchEl ? searchEl.value.trim() : "";
-        if (!search && !(column && op)) return;
-        const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
-        vscode.postMessage({ type: "applyFilter", column, op, value, search, columns });
+    function postFilter(project) {
+      const columnEl = document.getElementById("filter-column");
+      const column = columnEl ? columnEl.value : "";
+      const op = filterOp ? filterOp.value : "";
+      const value = filterValue ? filterValue.value : "";
+      const searchEl = document.getElementById("filter-search");
+      const search = searchEl ? searchEl.value.trim() : "";
+      const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
+      if (!project && !search && !(column && op)) return;
+      if (project && columns.length === 0) return;
+      const message = { type: "applyFilter", columns };
+      if (column) message.column = column;
+      if (op) message.op = op;
+      if (value) message.value = value;
+      if (search) message.search = search;
+      if (project) message.project = true;
+      vscode.postMessage(message);
+    }
+    if (applyFilter) applyFilter.addEventListener("click", () => postFilter(false));
+    const columnPicker = document.getElementById("column-picker");
+    if (columnPicker) {
+      let columnSnapshot = null;
+      columnPicker.addEventListener("toggle", () => {
+        if (columnPicker.open) {
+          columnSnapshot = [...hiddenColumns].sort().join("\0");
+          return;
+        }
+        const now = [...hiddenColumns].sort().join("\0");
+        if (columnSnapshot !== null && now !== columnSnapshot) postFilter(true);
       });
     }
 
     els.dql.addEventListener("input", () => {
+      queryOk = false;
       syncQuerySummary();
+      syncQueryActionButtons();
       schedulePlan();
     });
 
-    els.plan.addEventListener("click", () => {
-      if (!canExecuteQuery) return;
-      const dql = els.dql.value.trim();
-      if (!dql) return;
-      clearTimeout(planTimer);
-      vscode.postMessage({ type: "planDql", dql });
-    });
+    if (els.plan) {
+      els.plan.addEventListener("click", () => {
+        if (!canExecuteQuery) return;
+        const dql = els.dql.value.trim();
+        if (!dql) return;
+        clearTimeout(planTimer);
+        vscode.postMessage({ type: "planDql", dql });
+      });
+    }
 
     els.run.addEventListener("click", () => {
       if (!canExecuteQuery) return;
@@ -823,7 +1070,7 @@
         canCompare = msg.trustMode !== "untrusted-limited";
         if (els.compareRun) els.compareRun.disabled = !canCompare;
         els.run.disabled = !canExecuteQuery;
-        els.plan.disabled = !canExecuteQuery;
+        if (els.plan) els.plan.disabled = !canExecuteQuery;
         els.dql.disabled = !canExecuteQuery;
         setEditEnabled(canEdit);
         syncQueryActionButtons();
@@ -845,14 +1092,10 @@
         return;
       }
       if (msg.type === "queryState") {
-        els.run.disabled = msg.running || !canExecuteQuery;
-        els.plan.disabled = msg.running || !canExecuteQuery;
-        if (!msg.running) syncQueryActionButtons();
-        else {
-          els.saveQuery.disabled = true;
-          els.exportQuery.disabled = true;
-        }
-        els.cancel.disabled = !msg.running;
+        queryRunning = !!msg.running;
+        els.run.disabled = queryRunning || !canExecuteQuery;
+        if (els.plan) els.plan.disabled = queryRunning || !canExecuteQuery;
+        syncQueryActionButtons();
         return;
       }
       if (msg.type === "savedQueries") {
@@ -869,7 +1112,9 @@
       }
       if (msg.type === "queryLoaded") {
         els.dql.value = msg.dql;
+        queryOk = false;
         syncQuerySummary();
+        syncQueryActionButtons();
         schedulePlan();
         return;
       }
@@ -879,11 +1124,17 @@
       }
       if (msg.type === "inspectResult") {
         inspectRaw = typeof msg.raw === "string" ? msg.raw : JSON.stringify(msg.raw);
-        text(
-          els.inspectDetail,
-          "#" + msg.rowIndex + " · " + msg.column + " · " + msg.inferredType +
-            " · raw: " + JSON.stringify(msg.raw),
-        );
+        inspectReady = true;
+        if (document.getElementById("inspect-column")) {
+          paintInspector(msg.column, msg.inferredType || "", inspectRaw, false);
+          text(els.inspectDetail, "");
+        } else {
+          text(
+            els.inspectDetail,
+            "#" + msg.rowIndex + " · " + msg.column + " · " + msg.inferredType +
+              " · raw: " + JSON.stringify(msg.raw),
+          );
+        }
         return;
       }
       if (msg.type === "editPreview") {
@@ -904,11 +1155,13 @@
         return;
       }
       if (msg.type === "dqlPlan") {
+        queryOk = !!msg.ok;
         renderDqlDiagnostics(msg.diagnostics);
         text(
           els.dqlFormatted,
           msg.formatted && msg.ok ? "Formatted: " + msg.formatted : "",
         );
+        syncQueryActionButtons();
         return;
       }
       if (msg.type === "staleSource") {
@@ -933,9 +1186,11 @@
             text(titleEl, h.revision.path.split(/[/\\]/).pop() || "Dataset");
           }
           if (head && h.revision && h.revision.path) head.title = h.revision.path;
-          if (els.meta && h.revision && h.revision.path) {
-            text(els.meta, h.revision.path);
-          }
+          const schemaPath = document.getElementById("schema-path");
+          const filePath = h.revision && h.revision.path ? h.revision.path : "";
+          if (els.meta) text(els.meta, filePath);
+          if (schemaPath) schemaPath.hidden = filePath.length === 0;
+          applyDatasetColor(msg.datasetColor);
           renderDescribe(msg.describe);
           renderIngestDiagnostics(msg.ingestDiagnostics);
           renderDqlDiagnostics([]);
@@ -957,13 +1212,17 @@
       }
       if (msg.type === "queryResult") {
         renderDqlDiagnostics(msg.diagnostics);
+        queryOk = !(msg.diagnostics || []).some((d) => d.severity === "error");
         renderResult(msg.result);
+        syncQueryActionButtons();
         showEditorTab("result");
         return;
       }
       if (msg.type === "error") {
         if (els.loading) els.loading.hidden = true;
+        queryOk = false;
         renderDqlDiagnostics([{ severity: "error", message: msg.message }]);
+        syncQueryActionButtons();
       }
     });
   } catch (err) {

@@ -1,4 +1,4 @@
-/** Build a DQL 0.1 where/find from the editor toolbar. Does not run a query. No vscode. */
+/** Build a DQL 0.1 where/find/select from the editor toolbar. Does not run a query. No vscode. */
 
 export const FILTER_OPS = ["=", "!=", ">", "<", ">=", "<=", "is null", "is not null"] as const;
 
@@ -10,6 +10,8 @@ export interface FilterDraft {
   value?: string;
   search?: string;
   columns: readonly string[];
+  /** When true, append select of columns. Omitted means the draft does not project. */
+  project?: boolean;
 }
 
 const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -19,15 +21,17 @@ export function filterToDql(draft: FilterDraft): string | null {
   const column = draft.column?.trim() ?? "";
   const op = draft.op?.trim() ?? "";
   const hasFilter = column.length > 0 && op.length > 0;
-  if (!hasFilter && search.length === 0) return null;
+  const project = draft.project === true ? selectClause(draft.columns) : null;
+  if (!hasFilter && search.length === 0 && !project) return null;
   if (hasFilter && !isFilterOp(op)) return null;
 
   const where = hasFilter && isFilterOp(op) ? whereClause(column, op, draft.value ?? "") : null;
   const find = search.length > 0 ? findClause(search, draft.columns) : null;
   if (hasFilter && !where) return null;
   if (search.length > 0 && !find) return null;
-  if (find && where) return `${find} | ${where}`;
-  return find ?? where;
+  const parts = [find, where, project].filter((part): part is string => part !== null);
+  if (parts.length === 0) return null;
+  return parts.join(" | ");
 }
 
 function isFilterOp(op: string): op is FilterOp {
@@ -39,6 +43,12 @@ function whereClause(column: string, op: FilterOp, value: string): string {
   if (op === "is null" || op === "is not null") return `where ${ident} ${op}`;
   const literal = CANONICAL_NUMBER.test(value) ? value : JSON.stringify(value);
   return `where ${ident} ${op} ${literal}`;
+}
+
+function selectClause(columns: readonly string[]): string | null {
+  const names = columns.map((name) => name.trim()).filter((name) => name.length > 0);
+  if (names.length === 0) return null;
+  return `select ${names.map(quoteIdent).join(", ")}`;
 }
 
 function findClause(search: string, columns: readonly string[]): string | null {

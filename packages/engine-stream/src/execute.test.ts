@@ -35,6 +35,7 @@ describe("DQL execute streaming", () => {
     assert.equal(result.completion, "complete");
     assert.ok(result.rowCountReturned >= 1);
     assert.deepEqual(result.columns, ["id", "name"]);
+    assert.deepEqual(result.sourceRowIndexes, [0, 2]);
     store.close(handle.datasetId);
   });
 
@@ -52,6 +53,7 @@ describe("DQL execute streaming", () => {
     );
     assert.equal(result.completion, "complete");
     assert.equal(result.totalCount, 2);
+    assert.equal(result.sourceRowIndexes, undefined);
     assert.equal(result.rows[0]?.[0]?.kind, "integer");
     store.close(handle.datasetId);
   });

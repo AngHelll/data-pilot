@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { ColumnMeta, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
 import { parseDql, ParseError } from "@data-pilot/dql";
+import { datasetColorToken } from "../dataset-color";
 import { filterToDql } from "../filter-dql";
 import { formatCell, formatCells } from "../format-cell";
 import {
@@ -46,6 +47,9 @@ function serializeGrid(
     columns: result.columns,
     ...(columnTypes !== undefined ? { columnTypes } : {}),
     rows: formatCells(result.rows),
+    ...(result.sourceRowIndexes !== undefined
+      ? { sourceRowIndexes: result.sourceRowIndexes }
+      : {}),
     rowCountReturned: result.rowCountReturned,
     completion: result.completion,
     scope: result.scope,
@@ -85,7 +89,7 @@ function editorPanelHtml(
   ].join("; ");
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="editor-root">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}" />
@@ -94,10 +98,15 @@ function editorPanelHtml(
   <link rel="stylesheet" href="${escapeHtml(String(styleUri))}" />
 </head>
 <body data-layout="editor">
+  <div class="editor-split">
+  <div class="editor-main">
+  <div class="editor-chrome">
   <header class="editor-head" id="editor-head">
     <div class="editor-title-row">
+      <span id="dataset-color" class="dataset-color" hidden></span>
       <h1 id="title">Data Pilot</h1>
       <button id="run" type="button">Run query</button>
+      <button id="cancel" class="quiet" type="button" hidden>Cancel</button>
     </div>
     <p class="hint" id="loading">Loading dataset…</p>
     <p class="meta" id="editor-format"></p>
@@ -112,7 +121,7 @@ function editorPanelHtml(
   </header>
   <details>
     <summary>Schema</summary>
-    <p class="meta" id="meta"></p>
+    <p class="meta" id="schema-path" hidden><span class="path-label">Path</span> <span id="meta"></span></p>
     <section id="describe-section">
       <p class="hint" id="describe-meta"></p>
       <div class="table-wrap schema-wrap">
@@ -122,35 +131,32 @@ function editorPanelHtml(
       </div>
     </section>
   </details>
-  <details>
+  <details id="ingest-details" hidden>
     <summary>Parse warnings</summary>
     <ul class="diag" id="ingest-diagnostics"></ul>
-    <p class="hint" id="ingest-empty">No warnings in the bounded preview sample.</p>
   </details>
   <details id="query-details">
     <summary id="query-summary">Query</summary>
     <textarea id="dql" placeholder='where country = "MX" | take 20'></textarea>
-    <div class="row-actions">
-      <button id="plan" class="quiet" type="button">Check query</button>
-      <button id="save-query" class="quiet" type="button" disabled>Save query</button>
-      <button id="export-query" class="quiet" type="button" disabled>Export result</button>
-      <button id="cancel" class="quiet" type="button" disabled>Cancel</button>
+    <div class="row-actions" id="query-actions">
+      <button id="save-query" class="quiet" type="button" hidden>Save query</button>
     </div>
     <ul class="diag" id="dql-diagnostics"></ul>
     <p class="hint" id="dql-formatted"></p>
     <p class="cost" id="cost"></p>
   </details>
+  </div>
   <div class="editor-tabs">
-    <div class="tab-bar" role="tablist">
+    <div class="tab-bar" role="tablist" aria-label="Data Pilot">
+      <span class="tab-owner">Data Pilot</span>
       <button type="button" class="tab" id="tab-data" role="tab" aria-selected="true" aria-controls="panel-data">Data</button>
-      <button type="button" class="tab" id="tab-result" role="tab" aria-selected="false" aria-controls="panel-result">Result</button>
-      <button type="button" class="tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="panel-compare">Compare</button>
+      <button type="button" class="tab" id="tab-result" role="tab" aria-selected="false" aria-controls="panel-result" hidden>Result</button>
+      <button type="button" class="tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="panel-compare" hidden>Compare</button>
       <button type="button" class="tab" id="tab-profile" role="tab" aria-selected="false" aria-controls="panel-profile">Profile</button>
-      <button type="button" class="tab" id="tab-changes" role="tab" aria-selected="false" aria-controls="panel-changes">Changes</button>
+      <button type="button" class="tab" id="tab-changes" role="tab" aria-selected="false" aria-controls="panel-changes" hidden>Changes</button>
     </div>
-    <div id="panel-data" role="tabpanel">
+    <div id="panel-data" class="editor-panel" role="tabpanel">
   <section>
-    <label id="grid-label">Preview</label>
     <div class="toolbar" id="grid-toolbar">
       <label class="toolbar-label" for="filter-column">Filter</label>
       <select id="filter-column"><option value="">Column</option></select>
@@ -167,28 +173,29 @@ function editorPanelHtml(
       </select>
       <input id="filter-value" type="text" placeholder="Value" />
       <label class="toolbar-label" for="filter-search">Search</label>
-      <input id="filter-search" type="text" placeholder="Find in visible columns" />
+      <input id="filter-search" type="text" placeholder="Search" title="Find in visible columns. This does not run the query." />
       <button id="apply-filter" type="button">Apply filter</button>
       <details id="column-picker">
-        <summary>Columns</summary>
+        <summary>Select columns</summary>
         <div id="column-picker-body"></div>
       </details>
     </div>
     <div class="table-wrap editor-table"><table id="grid" tabindex="0"><thead></thead><tbody></tbody></table></div>
   </section>
     </div>
-    <div id="panel-result" role="tabpanel" hidden>
+    <div id="panel-result" class="editor-panel" role="tabpanel" hidden>
       <p class="hint" id="result-empty">No query yet.</p>
   <section id="result" hidden>
     <div class="row-actions">
       <label id="result-label">Result</label>
+      <button id="export-query" class="quiet" type="button" hidden>Export result</button>
       <button id="clear-result" class="quiet" type="button">Clear result</button>
     </div>
     <div class="table-wrap editor-table"><table id="result-grid"><thead></thead><tbody></tbody></table></div>
     <p class="hint" id="result-footer"></p>
   </section>
     </div>
-    <div id="panel-compare" role="tabpanel" hidden>
+    <div id="panel-compare" class="editor-panel" role="tabpanel" hidden>
   <section id="compare">
     <label>Compare</label>
     <p class="hint" id="compare-empty">Open another dataset to compare.</p>
@@ -208,7 +215,7 @@ function editorPanelHtml(
     </div>
   </section>
     </div>
-    <div id="panel-profile" role="tabpanel" hidden>
+    <div id="panel-profile" class="editor-panel" role="tabpanel" hidden>
   <section id="profile">
     <label>Profile</label>
     <p class="hint" id="profile-caption">These figures are from the describe sample, not the file.</p>
@@ -219,7 +226,7 @@ function editorPanelHtml(
     </div>
   </section>
     </div>
-    <div id="panel-changes" role="tabpanel" hidden>
+    <div id="panel-changes" class="editor-panel" role="tabpanel" hidden>
   <section id="changes">
     <label>Changes</label>
     <p class="hint" id="changes-empty">No pending change.</p>
@@ -227,23 +234,31 @@ function editorPanelHtml(
   </section>
     </div>
   </div>
+  <p id="editor-footer" class="editor-footer"></p>
+  </div>
   <section id="inspector" hidden>
     <div class="row-actions">
-      <label>Inspector</label>
+      <label>Cell inspector</label>
       <button id="inspector-toggle" type="button">Hide inspector</button>
-      <button id="copy-cell" type="button">Copy raw</button>
     </div>
     <div id="inspector-body">
-      <p id="inspect-detail">Click a cell to inspect raw value and type.</p>
+      <dl class="inspect-fields">
+        <dt>Column</dt><dd id="inspect-column">—</dd>
+        <dt>Type</dt><dd id="inspect-type">—</dd>
+        <dt>Raw value</dt><dd id="inspect-raw">—</dd>
+      </dl>
+      <p class="hint" id="inspect-detail"></p>
+      <button id="copy-cell" type="button">Copy value</button>
+      <label class="toolbar-label" for="edit-value">Edit value</label>
+      <input id="edit-value" class="cell-edit" type="text" placeholder="New raw value" disabled />
       <div class="row-actions">
-        <input id="edit-value" class="cell-edit" type="text" placeholder="New raw value" disabled />
         <button id="preview-edit" type="button" disabled>Preview diff</button>
         <button id="apply-edit" type="button" disabled>Apply save</button>
       </div>
       <pre class="diff" id="edit-diff"></pre>
     </div>
   </section>
-  <p id="editor-footer" class="editor-footer"></p>
+  </div>
   <script nonce="${escapeHtml(nonce)}" src="${escapeHtml(String(scriptUri))}"></script>
 </body>
 </html>`;
@@ -737,6 +752,7 @@ class DatasetViewSession {
           session.preview.diagnostics,
         ),
         preview: serializeGrid("preview", session.preview, session.handle.columns),
+        datasetColor: datasetColorToken(filePath),
       });
       this.consumePendingResult(filePath);
       this.postRevert();

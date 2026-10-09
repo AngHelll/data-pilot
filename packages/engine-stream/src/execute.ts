@@ -251,7 +251,7 @@ function matchFind(
   return false;
 }
 
-export async function executeDql(
+async function scanQuery(
   store: DatasetStore,
   datasetId: string,
   query: DqlQuery,
@@ -312,6 +312,7 @@ export async function executeDql(
   const started = Date.now();
 
   const outRows: DataValue[][] = [];
+  const sourceRowIndexes: number[] = [];
   const seenUnique: DataValue[] = [];
   let uniqueRepeat: DataValue | undefined;
   let whenFailed = false;
@@ -369,6 +370,7 @@ export async function executeDql(
         if (cell.kind !== "null" && cell.kind !== "missing") seenUnique.push(cell);
       }
       outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+      sourceRowIndexes.push(scannedRows - 1);
       if (takeStage && outRows.length >= takeStage.count) break;
       continue;
     }
@@ -382,6 +384,7 @@ export async function executeDql(
         whenFailed = true;
       }
       outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+      sourceRowIndexes.push(scannedRows - 1);
       if (takeStage && outRows.length >= takeStage.count) break;
       continue;
     }
@@ -403,6 +406,7 @@ export async function executeDql(
     }
 
     outRows.push(outColumns.map((c) => map.get(c) ?? { kind: "missing" }));
+    sourceRowIndexes.push(scannedRows - 1);
   }
 
   if (signal?.aborted) cancelled = true;
@@ -538,6 +542,9 @@ export async function executeDql(
       revisionId: session.handle.revision.revisionId,
       columns: outColumns,
       rows: outRows,
+      ...(sourceRowIndexes.length === outRows.length && outRows.length > 0
+        ? { sourceRowIndexes }
+        : {}),
       rowCountReturned: outRows.length,
       completion: "complete",
       scope: "full",
@@ -597,6 +604,9 @@ export async function executeDql(
       revisionId: session.handle.revision.revisionId,
       columns: outColumns,
       rows: outRows,
+      ...(sourceRowIndexes.length === outRows.length && outRows.length > 0
+        ? { sourceRowIndexes }
+        : {}),
       rowCountReturned: outRows.length,
       completion: "complete",
       scope: "full",
@@ -622,6 +632,9 @@ export async function executeDql(
     revisionId: session.handle.revision.revisionId,
     columns: outColumns,
     rows: outRows,
+    ...(sourceRowIndexes.length === outRows.length && outRows.length > 0
+      ? { sourceRowIndexes }
+      : {}),
     rowCountReturned: outRows.length,
     completion,
     scope: completion === "complete" ? "full" : "prefix",
@@ -629,4 +642,17 @@ export async function executeDql(
     scannedBytes,
     scannedRows,
   };
+}
+
+export async function executeDql(
+  store: DatasetStore,
+  datasetId: string,
+  query: DqlQuery,
+  params: Record<string, DataValue>,
+  budget: QueryBudget,
+  requestId: string,
+  signal?: AbortSignal,
+): Promise<QueryResult> {
+  const result = await scanQuery(store, datasetId, query, params, budget, requestId, signal);
+  return store.seal(datasetId, result);
 }

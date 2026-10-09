@@ -48,6 +48,7 @@ export type HostToWebviewMessage =
       describe: SerializedDescribe;
       ingestDiagnostics: Diagnostic[];
       preview: SerializedGrid;
+      datasetColor: string;
     }
   | {
       type: "dqlPlan";
@@ -117,6 +118,7 @@ export type WebviewToHostMessage =
       value?: string;
       search?: string;
       columns: string[];
+      project?: boolean;
     };
 
 export interface SerializedGrid {
@@ -124,6 +126,7 @@ export interface SerializedGrid {
   columns: string[];
   columnTypes?: ColumnMeta[];
   rows: string[][];
+  sourceRowIndexes?: number[];
   rowCountReturned: number;
   completion: QueryResult["completion"];
   scope: QueryResult["scope"];
@@ -222,6 +225,7 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       if (value !== undefined && (typeof value !== "string" || value.length > MAX_CELL_LENGTH)) return null;
       if (search !== undefined && (typeof search !== "string" || search.length > MAX_CELL_LENGTH)) return null;
       if (!Array.isArray(msg.columns) || msg.columns.length > 200) return null;
+      if (msg.project !== undefined && typeof msg.project !== "boolean") return null;
       const columns: string[] = [];
       for (const name of msg.columns) {
         if (!validColumn(name)) return null;
@@ -234,6 +238,7 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
         ...(typeof value === "string" ? { value } : {}),
         ...(typeof search === "string" ? { search } : {}),
         columns,
+        ...(msg.project === true ? { project: true } : {}),
       };
     }
     case "compareDatasets": {

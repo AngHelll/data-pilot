@@ -42,7 +42,10 @@ textarea.dql-ok { border-color: var(--vscode-inputValidation-infoBorder, transpa
 .cost { font-size: 0.85rem; opacity: 0.9; margin-top: 6px; }
 td.cell { cursor: pointer; }
 td.cell:hover { background: var(--vscode-list-hoverBackground); }
-td.cell.selected { outline: 1px solid var(--vscode-focusBorder); }
+td.cell.selected {
+  outline: 2px solid var(--vscode-focusBorder, #3794ff);
+  outline-offset: -2px;
+}
 pre.diff {
   font-family: var(--vscode-editor-font-family);
   font-size: 0.8rem;
@@ -63,7 +66,12 @@ input.cell-edit {
   padding: 4px 8px;
 }
 #inspect-detail { font-size: 0.9rem; margin-top: 4px; }
-body[data-layout="editor"] .editor-table { max-height: none; min-height: 240px; }
+body[data-layout="editor"] .editor-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
 body[data-layout="editor"] #grid { width: max-content; min-width: 100%; }
 body[data-layout="editor"] #grid th { min-width: 4.5rem; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -100,7 +108,43 @@ body[data-layout="editor"] .editor-title-row {
   gap: 12px;
 }
 body[data-layout="editor"] .editor-title-row h1 { flex: 1; margin: 0; }
+body[data-layout="editor"] .editor-head {
+  border-left: 3px solid var(--dataset-color, transparent);
+  padding-left: 8px;
+}
+body[data-layout="editor"] .dataset-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dataset-color, transparent);
+  flex-shrink: 0;
+}
 body[data-layout="editor"] #run { margin-top: 0; }
+body[data-layout="editor"] button:not(.tab) {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+body[data-layout="editor"] #run {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+}
+body[data-layout="editor"] #apply-edit {
+  color: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+body[data-layout="editor"] .tab-owner {
+  align-self: center;
+  margin: 0 10px 0 2px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+body[data-layout="editor"] .path-label {
+  font-weight: 600;
+  margin-right: 6px;
+}
 body[data-layout="editor"] .quiet {
   background: transparent;
   color: var(--vscode-foreground);
@@ -110,8 +154,8 @@ body[data-layout="editor"] details { margin-top: 12px; }
 body[data-layout="editor"] summary { cursor: pointer; font-weight: 600; }
 body[data-layout="editor"] #inspector label { margin: 0; }
 body[data-layout="editor"] .tab-bar {
-  position: sticky;
-  top: 0;
+  position: static;
+  flex-shrink: 0;
   z-index: 3;
   margin-top: 12px;
   padding-top: 4px;
@@ -132,4 +176,130 @@ body[data-layout="editor"] .tab-bar {
   color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
   border-color: var(--vscode-panel-border);
   font-weight: 600;
+}
+body[data-layout="editor"] .tab-bar .tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+body[data-layout="editor"] .tab-bar .tab[aria-selected="true"] {
+  background: transparent;
+  border-bottom-color: var(--vscode-focusBorder, var(--vscode-button-background));
+}
+html.editor-root,
+html.editor-root body {
+  height: 100%;
+}
+body[data-layout="editor"] {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 12px;
+}
+body[data-layout="editor"] .editor-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+body[data-layout="editor"] .editor-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body[data-layout="editor"] .inspect-fields {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 6px 10px;
+  margin: 8px 0 12px;
+}
+body[data-layout="editor"] .inspect-fields dt { margin: 0; opacity: 0.75; }
+body[data-layout="editor"] .inspect-fields dd { margin: 0; }
+body[data-layout="editor"] #inspector .cell-edit { width: 100%; box-sizing: border-box; margin: 4px 0 8px; }
+@media (max-width: 720px) {
+  body[data-layout="editor"] .editor-split { flex-direction: column; }
+  body[data-layout="editor"] #inspector {
+    flex: 0 1 auto;
+    max-height: 34%;
+    border-left: none;
+    border-top: 1px solid var(--vscode-panel-border);
+  }
+}
+body[data-layout="editor"] .editor-chrome {
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow: auto;
+}
+body[data-layout="editor"] .editor-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body[data-layout="editor"] .editor-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body[data-layout="editor"] .editor-panel > section {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 8px;
+}
+body[data-layout="editor"] .editor-panel > section > label,
+body[data-layout="editor"] .toolbar,
+body[data-layout="editor"] .row-actions {
+  flex-shrink: 0;
+}
+body[data-layout="editor"] #panel-compare > section {
+  overflow: auto;
+}
+body[data-layout="editor"] #panel-profile .schema-wrap,
+body[data-layout="editor"] #changes-diff {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+}
+body[data-layout="editor"] #inspector {
+  flex: 0 0 16rem;
+  max-height: none;
+  overflow: auto;
+  border-left: 1px solid var(--vscode-panel-border);
+  padding: 8px 12px 12px;
+  margin: 0;
+}
+body[data-layout="editor"] .editor-footer {
+  flex: 0 0 auto;
+}
+body[data-layout="editor"] .toolbar input,
+body[data-layout="editor"] .toolbar select {
+  min-width: 0;
+  max-width: 100%;
+}
+.cell-type-string { color: var(--vscode-charts-blue, #3794ff); }
+.cell-type-integer { color: var(--vscode-charts-green, #89d185); }
+.cell-type-decimal { color: var(--vscode-charts-orange, #d18616); }
+.cell-type-boolean { color: var(--vscode-charts-purple, #b180d7); }
+.cell-type-date { color: var(--vscode-charts-yellow, #cca700); }
+.cell-type-datetime { color: var(--vscode-charts-red, #f14c4c); }
+.cell-null,
+.cell-missing { opacity: 0.55; font-style: italic; }
+.cell-editor {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border));
 }

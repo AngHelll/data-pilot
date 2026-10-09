@@ -52,6 +52,17 @@ test("parseWebviewMessage accepts compareDatasets", () => {
   );
 });
 
+test("parseWebviewMessage accepts a column projection and rejects a bad flag", () => {
+  assert.deepEqual(
+    parseWebviewMessage({ type: "applyFilter", columns: ["id", "name"], project: true }),
+    { type: "applyFilter", columns: ["id", "name"], project: true },
+  );
+  assert.equal(
+    parseWebviewMessage({ type: "applyFilter", columns: ["id"], project: "yes" }),
+    null,
+  );
+});
+
 test("parseWebviewMessage accepts applyFilter", () => {
   assert.deepEqual(
     parseWebviewMessage({

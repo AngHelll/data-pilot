@@ -71,6 +71,9 @@ export class ExportService {
       };
     }
 
+    const moved = await this.store.assertFresh(datasetId);
+    if (moved) return moved;
+
     const content = serializeQueryResult(
       format,
       result.columns,

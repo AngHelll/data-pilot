@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { datasetColorToken } from "./dataset-color";
 import { datasetTreePresentation } from "./dataset-tree-presentation";
 import type { OpenDatasetSession } from "./dataset-sessions";
 import type { ExtensionEngineHost } from "./engine-host";
@@ -28,7 +29,10 @@ export class DatasetTreeProvider
     item.id = session.datasetId;
     if (shown.description) item.description = shown.description;
     item.tooltip = shown.tooltip;
-    item.iconPath = new vscode.ThemeIcon("table");
+    item.iconPath = new vscode.ThemeIcon(
+      "circle-filled",
+      new vscode.ThemeColor(datasetColorToken(session.filePath)),
+    );
     item.command = {
       command: "dataPilot.openDatasetCustomEditor",
       title: "Open dataset",
