@@ -12,6 +12,15 @@ describe("dataset session registry", () => {
     assert.equal(registry.lookup("/data/tiny.csv"), "ds-tiny");
   });
 
+  it("forgets a path so the next open is not the stale id", () => {
+    const registry = new DatasetSessionRegistry();
+    registry.remember("/data/tiny.csv", "ds-old");
+    registry.forget("/data/tiny.csv");
+    assert.equal(registry.lookup("/data/tiny.csv"), undefined);
+    registry.remember("/data/tiny.csv", "ds-new");
+    assert.equal(registry.lookup("/data/tiny.csv"), "ds-new");
+  });
+
   it("reuses the id for the same path", () => {
     const registry = new DatasetSessionRegistry();
     registry.remember("/data/tiny.csv", "ds-tiny");

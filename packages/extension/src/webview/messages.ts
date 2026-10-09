@@ -41,6 +41,7 @@ export type HostToWebviewMessage =
   | { type: "exportDone"; path: string; rowCount: number }
   | { type: "queryLoaded"; dql: string }
   | { type: "staleSource"; message: string }
+  | { type: "revertState"; available: boolean }
   | {
       type: "session";
       handle: DatasetHandle;
@@ -100,6 +101,7 @@ export type WebviewToHostMessage =
   | { type: "exportQuery"; dql: string; format?: ExportFormat }
   | { type: "loadSavedQuery"; savedAtMs: number }
   | { type: "reopenDataset" }
+  | { type: "revertLastEdit" }
   | { type: "webviewReady" }
   | { type: "cancelQuery" }
   | { type: "inspectCell"; rowIndex: number; column: string }
@@ -185,6 +187,8 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
     }
     case "reopenDataset":
       return { type: "reopenDataset" };
+    case "revertLastEdit":
+      return { type: "revertLastEdit" };
     case "webviewReady":
       return { type: "webviewReady" };
     case "cancelQuery":

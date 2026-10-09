@@ -106,6 +106,9 @@ function editorPanelHtml(
       <span class="warn" id="stale-banner"></span>
       <button id="reopen" type="button">Reopen dataset</button>
     </div>
+    <div class="row-actions" id="revert-row" hidden>
+      <button id="revert-edit" class="quiet" type="button">Revert last edit</button>
+    </div>
   </header>
   <details>
     <summary>Schema</summary>
@@ -143,6 +146,7 @@ function editorPanelHtml(
       <button type="button" class="tab" id="tab-result" role="tab" aria-selected="false" aria-controls="panel-result">Result</button>
       <button type="button" class="tab" id="tab-compare" role="tab" aria-selected="false" aria-controls="panel-compare">Compare</button>
       <button type="button" class="tab" id="tab-profile" role="tab" aria-selected="false" aria-controls="panel-profile">Profile</button>
+      <button type="button" class="tab" id="tab-changes" role="tab" aria-selected="false" aria-controls="panel-changes">Changes</button>
     </div>
     <div id="panel-data" role="tabpanel">
   <section>
@@ -176,7 +180,10 @@ function editorPanelHtml(
     <div id="panel-result" role="tabpanel" hidden>
       <p class="hint" id="result-empty">No query yet.</p>
   <section id="result" hidden>
-    <label id="result-label">Result</label>
+    <div class="row-actions">
+      <label id="result-label">Result</label>
+      <button id="clear-result" class="quiet" type="button">Clear result</button>
+    </div>
     <div class="table-wrap editor-table"><table id="result-grid"><thead></thead><tbody></tbody></table></div>
     <p class="hint" id="result-footer"></p>
   </section>
@@ -210,6 +217,13 @@ function editorPanelHtml(
         <th>Column</th><th>Type</th><th>Sample size</th><th>null</th><th>missing</th><th>Distinct</th><th>Min</th><th>Max</th>
       </tr></thead><tbody></tbody></table>
     </div>
+  </section>
+    </div>
+    <div id="panel-changes" role="tabpanel" hidden>
+  <section id="changes">
+    <label>Changes</label>
+    <p class="hint" id="changes-empty">No pending change.</p>
+    <pre class="diff" id="changes-diff" hidden></pre>
   </section>
     </div>
   </div>
@@ -656,6 +670,20 @@ class DatasetViewSession {
     this.markWebviewReady();
   }
 
+  private suppressStaleUntil = 0;
+
+  /** Our own write is not an external change. The watcher stays quiet through the reload. */
+  private holdOwnWrite(): void {
+    this.suppressStaleUntil = Date.now() + 2000;
+  }
+
+  private postRevert(): void {
+    const available = this.currentFilePath
+      ? this.engine.hasRevert(this.currentFilePath)
+      : false;
+    this.post({ type: "revertState", available });
+  }
+
   private watchSourceFile(filePath: string): void {
     this.fileWatcher?.dispose();
     this.currentFilePath = filePath;
@@ -669,7 +697,9 @@ class DatasetViewSession {
       acceptStaleEvents = true;
     }, 750);
     const notifyStale = (): void => {
-      if (!acceptStaleEvents) return;
+      if (!acceptStaleEvents || Date.now() < this.suppressStaleUntil) return;
+      if (this.currentFilePath) this.engine.dropRevert(this.currentFilePath);
+      this.postRevert();
       this.post({
         type: "staleSource",
         message:
@@ -709,6 +739,7 @@ class DatasetViewSession {
         preview: serializeGrid("preview", session.preview, session.handle.columns),
       });
       this.consumePendingResult(filePath);
+      this.postRevert();
       return true;
     } catch (err) {
       const message =
@@ -799,6 +830,22 @@ class DatasetViewSession {
       return;
     }
 
+    if (msg.type === "revertLastEdit") {
+      if (!this.currentFilePath) return;
+      this.holdOwnWrite();
+      try {
+        const reverted = await this.engine.revertLastEdit(this.currentFilePath);
+        if (!reverted) {
+          this.postRevert();
+          return;
+        }
+        await this.loadDataset(this.currentFilePath);
+      } catch (err) {
+        showErr(err);
+      }
+      return;
+    }
+
     if (msg.type === "cancelQuery") {
       await this.engine.cancelActiveQuery();
       this.post({ type: "queryState", running: false });
@@ -845,6 +892,7 @@ class DatasetViewSession {
     }
 
     if (msg.type === "applyEdit") {
+      this.holdOwnWrite();
       try {
         const applied = await this.engine.applyEdit(
           boundDatasetId(),
@@ -859,6 +907,7 @@ class DatasetViewSession {
         void vscode.window.showInformationMessage(
           `Saved ${applied.editPreview.column} @ row ${applied.editPreview.rowIndex}`,
         );
+        this.holdOwnWrite();
         await this.loadDataset(applied.path);
       } catch (err) {
         showErr(err);

@@ -16,6 +16,7 @@
     let lastGrid = null;
     let lastResult = null;
     let editorTab = "data";
+    let hasResult = false;
     const hiddenColumns = new Set();
     const columnWidths = new Map();
 
@@ -55,10 +56,12 @@
       tabResult: document.getElementById("tab-result"),
       tabCompare: document.getElementById("tab-compare"),
       tabProfile: document.getElementById("tab-profile"),
+      tabChanges: document.getElementById("tab-changes"),
       panelData: document.getElementById("panel-data"),
       panelResult: document.getElementById("panel-result"),
       panelCompare: document.getElementById("panel-compare"),
       panelProfile: document.getElementById("panel-profile"),
+      panelChanges: document.getElementById("panel-changes"),
       profileBody: document.querySelector("#profile-table tbody"),
       compareEmpty: document.getElementById("compare-empty"),
       compareControls: document.getElementById("compare-controls"),
@@ -325,12 +328,14 @@
         result: els.panelResult,
         compare: els.panelCompare,
         profile: els.panelProfile,
+        changes: els.panelChanges,
       };
       const tabs = {
         data: els.tabData,
         result: els.tabResult,
         compare: els.tabCompare,
         profile: els.tabProfile,
+        changes: els.tabChanges,
       };
       if (!panels[name]) return;
       editorTab = name;
@@ -374,6 +379,8 @@
 
     function clearResult() {
       lastResult = null;
+      hasResult = false;
+      syncResultIdentity();
       if (els.resultEmpty) els.resultEmpty.hidden = false;
       if (!els.result) return;
       els.result.hidden = true;
@@ -418,7 +425,44 @@
         tbody.appendChild(tr);
       });
       if (els.resultFooter) text(els.resultFooter, resultLine(grid));
+      hasResult = true;
+      syncResultIdentity();
       syncEditorFooter();
+    }
+
+    function queryLine() {
+      if (!els.dql) return "";
+      const single = els.dql.value.replace(/\s+/g, " ").trim();
+      return single.length > 80 ? single.slice(0, 79) + "…" : single;
+    }
+
+    function syncResultIdentity() {
+      const label = document.getElementById("result-label");
+      if (!label) return;
+      const line = queryLine();
+      const titleEl = document.getElementById("title");
+      const file = titleEl ? titleEl.textContent.trim() : "";
+      if (!hasResult || !line) {
+        text(label, "Result");
+        return;
+      }
+      text(label, file ? line + " — " + file : line);
+    }
+
+    function showChangesDiff(value) {
+      const empty = document.getElementById("changes-empty");
+      const pre = document.getElementById("changes-diff");
+      if (!empty || !pre) return;
+      if (!value) {
+        empty.hidden = false;
+        pre.hidden = true;
+        text(pre, "");
+        text(empty, "No pending change.");
+        return;
+      }
+      empty.hidden = true;
+      pre.hidden = false;
+      text(pre, value);
     }
 
     function renderGrid(grid) {
@@ -557,6 +601,7 @@
       const single = els.dql.value.replace(/\s+/g, " ").trim();
       const line = single.length > 80 ? single.slice(0, 79) + "…" : single;
       text(summary, line || "Query");
+      syncResultIdentity();
     }
 
     function syncQueryActionButtons() {
@@ -695,6 +740,19 @@
     els.reopen.addEventListener("click", () => {
       vscode.postMessage({ type: "reopenDataset" });
     });
+    const revertEdit = document.getElementById("revert-edit");
+    if (revertEdit) {
+      revertEdit.addEventListener("click", () => {
+        vscode.postMessage({ type: "revertLastEdit" });
+      });
+    }
+    const clearResultButton = document.getElementById("clear-result");
+    if (clearResultButton) {
+      clearResultButton.addEventListener("click", () => {
+        clearResult();
+        showEditorTab("data");
+      });
+    }
 
     function showStale(message) {
       text(els.staleBanner, message);
@@ -720,6 +778,7 @@
     if (els.tabResult) els.tabResult.addEventListener("click", () => showEditorTab("result"));
     if (els.tabCompare) els.tabCompare.addEventListener("click", () => showEditorTab("compare"));
     if (els.tabProfile) els.tabProfile.addEventListener("click", () => showEditorTab("profile"));
+    if (els.tabChanges) els.tabChanges.addEventListener("click", () => showEditorTab("changes"));
 
     if (els.comparePeer) {
       els.comparePeer.addEventListener("change", () => fillCompareColumns());
@@ -828,11 +887,14 @@
         return;
       }
       if (msg.type === "editPreview") {
-        text(els.editDiff, msg.preview.unifiedDiff || "(no changes)");
+        const diff = msg.preview.unifiedDiff || "(no changes)";
+        text(els.editDiff, diff);
+        showChangesDiff(diff);
         return;
       }
       if (msg.type === "editApplied") {
         text(els.editDiff, "");
+        showChangesDiff("");
         selected = null;
         renderDescribe(msg.describe);
         renderIngestDiagnostics(msg.ingestDiagnostics);
@@ -851,6 +913,13 @@
       }
       if (msg.type === "staleSource") {
         showStale(msg.message);
+        clearResult();
+        showEditorTab("data");
+        return;
+      }
+      if (msg.type === "revertState") {
+        const row = document.getElementById("revert-row");
+        if (row) row.hidden = !msg.available;
         return;
       }
       if (msg.type === "session") {
@@ -872,6 +941,7 @@
           renderDqlDiagnostics([]);
           text(els.dqlFormatted, "");
           text(els.editDiff, "");
+          showChangesDiff("");
           selected = null;
           selectedPos = null;
           inspectRaw = "";

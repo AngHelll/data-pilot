@@ -2,7 +2,7 @@
 
 **Fecha:** 7 de octubre de 2026  
 **Versión:** 0.1  
-**Estado:** dirección de diseño acordada. Las specs 1–18 de la fase 7 están verificadas. El tag `v0.2.0` publica esta rama. La sección 2 es la captura anterior a ese workspace.
+**Estado:** dirección de diseño acordada. Las specs 1–18 de la fase 7 están verificadas. Las specs 19 y 20 están implementadas. El tag `v0.2.0` publica esta rama. La sección 2 es la captura anterior a ese workspace.
 
 Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos. No existe `docs/ROADMAP.md`. El turno de este diseño es la **fase 7**, que ya es la superficie actual del workspace. Las fases 5 y 6 son el cierre v0.1 y el empaquetado anteriores. La fase 8 (CLI/agentes) es una superficie aparte ya verificada.
 
@@ -172,6 +172,8 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 - La spec 16 está verificada: la fila de Datasets muestra el nombre del archivo. El id de sesión queda en el tooltip.
 - La spec 17 está verificada: guardar el mismo texto y el mismo dataset sustituye la fila. “No dataset” recibe un path solo con Associate with open dataset.
 - La spec 18 está verificada: si el preview terminó el archivo, la cabecera muestra ese conteo. Si el scan se cortó, sigue el total desconocido.
-- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 de arriba están verificadas.
+- La spec 19 está implementada: el panel Result nombra la consulta y el archivo. La pestaña sigue diciendo Result.
+- La spec 20 está implementada: Changes muestra el último diff. Apply save sigue en el inspector.
+- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 de arriba están verificadas. Las specs 19 y 20 están implementadas.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

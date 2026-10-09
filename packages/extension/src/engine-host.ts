@@ -16,6 +16,7 @@ import { assertOpAllowed, type PlanResult, type SessionContext } from "@data-pil
 import { ChildProcessHost, SOURCE_CHANGED_MESSAGE, sourceStillMatches } from "@data-pilot/runtime-node";
 import { DatasetSessionRegistry, type OpenDatasetSession } from "./dataset-sessions";
 import { replaceOpenDatasetFile } from "./fixture-writer";
+import { previewIsStale } from "./stale-preview";
 import { logError, logInfo } from "./log";
 import type { SerializedEditPreview } from "./webview/messages";
 import * as fs from "node:fs";
@@ -151,6 +152,26 @@ export class ExtensionEngineHost {
     this.host = undefined;
   }
 
+  private readonly revertText = new Map<string, string>();
+
+  hasRevert(filePath: string): boolean {
+    return this.revertText.has(path.resolve(filePath));
+  }
+
+  dropRevert(filePath: string): void {
+    this.revertText.delete(path.resolve(filePath));
+  }
+
+  /** Write back the text from before the last Apply. One step; it does not record a redo. */
+  async revertLastEdit(filePath: string): Promise<boolean> {
+    const key = path.resolve(filePath);
+    const previous = this.revertText.get(key);
+    if (previous === undefined) return false;
+    this.revertText.delete(key);
+    await replaceOpenDatasetFile(filePath, previous);
+    return true;
+  }
+
   async openDataset(filePath: string): Promise<{
     handle: DatasetHandle;
     diagnostics: Diagnostic[];
@@ -176,11 +197,20 @@ export class ExtensionEngineHost {
           { timeoutMs: 120_000 },
         );
         if (!preview.ok) throw ipcError(preview);
-        return {
-          handle: cached.handle,
-          diagnostics: cached.diagnostics,
-          preview: preview.result as QueryResult,
-        };
+        const previewResult = preview.result as QueryResult;
+        if (!previewIsStale(previewResult.diagnostics)) {
+          return {
+            handle: cached.handle,
+            diagnostics: cached.diagnostics,
+            preview: previewResult,
+          };
+        }
+        logInfo(`Stale session for ${filePath}; opening the file again`);
+        await host
+          .request("closeDataset", { datasetId: existingId }, { timeoutMs: 5000 })
+          .catch(() => undefined);
+        this.openHandles.delete(existingId);
+        this.sessions.forget(filePath);
       }
 
       logInfo(`IPC openDataset → ${filePath}`);
@@ -457,7 +487,9 @@ export class ExtensionEngineHost {
         message: SOURCE_CHANGED_MESSAGE,
       } satisfies Diagnostic;
     }
+    const previousText = await fs.promises.readFile(result.path, "utf8");
     await replaceOpenDatasetFile(result.path, result.afterText);
+    this.revertText.set(path.resolve(result.path), previousText);
     return { written: true, path: result.path, editPreview };
   }
 

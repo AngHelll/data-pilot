@@ -20,6 +20,11 @@ export class DatasetSessionRegistry {
     this.emit();
   }
 
+  /** Drop a path whose file no longer matches the open session. */
+  forget(filePath: string): void {
+    if (this.byPath.delete(path.resolve(filePath))) this.emit();
+  }
+
   /** Open sessions for the Activity Bar tree. A second path does not drop the first. */
   entries(): OpenDatasetSession[] {
     return [...this.byPath.entries()].map(([filePath, datasetId]) => ({
