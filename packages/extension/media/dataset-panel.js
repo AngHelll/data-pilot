@@ -284,10 +284,15 @@
           queryOk = false;
           renderDqlDiagnostics([]);
           text(els.dqlFormatted, "");
+          applyChips([], null);
           syncQueryActionButtons();
           return;
         }
-        vscode.postMessage({ type: "planDql", dql });
+        vscode.postMessage({
+          type: "planDql",
+          dql,
+          columns: lastGrid ? visibleNames(lastGrid.columns) : [],
+        });
       }, 450);
     }
 
@@ -899,6 +904,18 @@
       return cmp.column + " " + cmp.op + " " + cmp.value;
     }
 
+    function applyChips(filters, search) {
+      comparisons = Array.isArray(filters)
+        ? filters.map((cmp) => ({ column: cmp.column, op: cmp.op, value: cmp.value || "" }))
+        : [];
+      appliedSearch = typeof search === "string" ? search : "";
+      renderFilterChips();
+    }
+
+    function chipColumns() {
+      return lastGrid ? visibleNames(lastGrid.columns) : [];
+    }
+
     function renderFilterChips() {
       const host = document.getElementById("filter-chips");
       if (!host) return;
@@ -909,9 +926,12 @@
         btn.className = "filter-chip";
         text(btn, cmpText(cmp) + " ×");
         btn.addEventListener("click", () => {
-          comparisons = comparisons.filter((_, i) => i !== index);
-          renderFilterChips();
-          postApplied(false);
+          vscode.postMessage({
+            type: "applyFilter",
+            columns: chipColumns(),
+            keepDql: els.dql.value,
+            dropFilter: index,
+          });
         });
         host.appendChild(btn);
       });
@@ -921,11 +941,14 @@
         btn.className = "filter-chip";
         text(btn, appliedSearch + " ×");
         btn.addEventListener("click", () => {
-          appliedSearch = "";
           const searchEl = document.getElementById("filter-search");
           if (searchEl) searchEl.value = "";
-          renderFilterChips();
-          postApplied(false);
+          vscode.postMessage({
+            type: "applyFilter",
+            columns: chipColumns(),
+            keepDql: els.dql.value,
+            dropSearch: true,
+          });
         });
         host.appendChild(btn);
       }
@@ -996,7 +1019,11 @@
         const dql = els.dql.value.trim();
         if (!dql) return;
         clearTimeout(planTimer);
-        vscode.postMessage({ type: "planDql", dql });
+        vscode.postMessage({
+          type: "planDql",
+          dql,
+          columns: lastGrid ? visibleNames(lastGrid.columns) : [],
+        });
       });
     }
 
@@ -1184,6 +1211,7 @@
       }
       if (msg.type === "queryLoaded") {
         els.dql.value = msg.dql;
+        if ("chipFilters" in msg) applyChips(msg.chipFilters, msg.chipSearch);
         queryOk = false;
         syncQuerySummary();
         syncQueryActionButtons();
@@ -1227,12 +1255,14 @@
         return;
       }
       if (msg.type === "dqlPlan") {
+        if (typeof msg.dql === "string" && msg.dql !== els.dql.value.trim()) return;
         queryOk = !!msg.ok;
         renderDqlDiagnostics(msg.diagnostics);
         text(
           els.dqlFormatted,
           msg.formatted && msg.ok ? "Formatted: " + msg.formatted : "",
         );
+        if ("chipFilters" in msg) applyChips(msg.chipFilters, msg.chipSearch);
         syncQueryActionButtons();
         return;
       }

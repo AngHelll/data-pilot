@@ -63,6 +63,35 @@ test("parseWebviewMessage accepts a column projection and rejects a bad flag", (
   );
 });
 
+test("parseWebviewMessage accepts a chip drop and a plan with columns", () => {
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "applyFilter",
+      columns: ["country", "balance"],
+      keepDql: 'where country = "MX" and balance > 50000 | take 10',
+      dropFilter: 0,
+    }),
+    {
+      type: "applyFilter",
+      columns: ["country", "balance"],
+      keepDql: 'where country = "MX" and balance > 50000 | take 10',
+      dropFilter: 0,
+    },
+  );
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "planDql",
+      dql: 'find "ada" in name',
+      columns: ["name"],
+    }),
+    { type: "planDql", dql: 'find "ada" in name', columns: ["name"] },
+  );
+  assert.equal(
+    parseWebviewMessage({ type: "applyFilter", columns: ["name"], keepDql: "where name is not null" }),
+    null,
+  );
+});
+
 test("parseWebviewMessage accepts openQueryInEditor", () => {
   assert.deepEqual(parseWebviewMessage({ type: "openQueryInEditor" }), { type: "openQueryInEditor" });
 });

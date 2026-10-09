@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ColumnMeta, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
-import { parseDql, ParseError } from "@data-pilot/dql";
+import { dropToolbarChip, parseDql, ParseError, readToolbarChips } from "@data-pilot/dql";
 import { datasetColorToken } from "../dataset-color";
 import { filterToDql } from "../filter-dql";
 import { formatCell, formatCells } from "../format-cell";
@@ -599,6 +599,16 @@ class DatasetViewSession {
     });
   }
 
+  private postQueryLoaded(dql: string, columns: readonly string[]): void {
+    const chips = readToolbarChips(dql, columns);
+    this.post({
+      type: "queryLoaded",
+      dql,
+      chipFilters: chips.filters,
+      chipSearch: chips.search,
+    });
+  }
+
   private post(message: HostToWebviewMessage): void {
     if (message.type === "session") {
       this.lastSessionPayload = message;
@@ -939,7 +949,7 @@ class DatasetViewSession {
         .list()
         .find((q) => q.savedAtMs === msg.savedAtMs);
       if (found) {
-        this.post({ type: "queryLoaded", dql: found.dql });
+        this.postQueryLoaded(found.dql, []);
       }
       return;
     }
@@ -1004,13 +1014,17 @@ class DatasetViewSession {
 
     if (msg.type === "planDql") {
       try {
+        const chips = readToolbarChips(msg.dql, msg.columns ?? []);
         const plan = await this.engine.planQuery(boundDatasetId(), msg.dql);
         const ok = planLooksRunnable(plan.diagnostics);
         this.post({
           type: "dqlPlan",
           ok,
+          dql: msg.dql,
           ...(plan.formatted !== undefined ? { formatted: plan.formatted } : {}),
           diagnostics: plan.diagnostics,
+          chipFilters: chips.filters,
+          chipSearch: chips.search,
         });
       } catch (err) {
         showErr(err);
@@ -1060,9 +1074,19 @@ class DatasetViewSession {
     }
 
     if (msg.type === "applyFilter") {
+      if (msg.keepDql) {
+        const next = msg.dropSearch
+          ? dropToolbarChip(msg.keepDql, msg.columns, { search: true })
+          : msg.dropFilter !== undefined
+            ? dropToolbarChip(msg.keepDql, msg.columns, { filter: msg.dropFilter })
+            : null;
+        if (next === null) return;
+        this.postQueryLoaded(next, msg.columns);
+        return;
+      }
       const dql = filterToDql(msg);
       if (!dql) {
-        if (!msg.project) this.post({ type: "queryLoaded", dql: "" });
+        if (!msg.project) this.postQueryLoaded("", msg.columns);
         return;
       }
       try {
@@ -1086,7 +1110,7 @@ class DatasetViewSession {
         showErr(err);
         return;
       }
-      this.post({ type: "queryLoaded", dql });
+      this.postQueryLoaded(dql, msg.columns);
       return;
     }
 

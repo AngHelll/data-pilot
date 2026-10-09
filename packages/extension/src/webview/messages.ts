@@ -7,7 +7,7 @@ import type {
   SavedQuery,
   TrustMode,
 } from "@data-pilot/contracts";
-import { FILTER_OPS } from "../filter-dql";
+import { FILTER_OPS, type FilterCmp } from "../filter-dql";
 /** Host → webview (validated before postMessage). */
 export interface SerializedEditPreview {
   path: string;
@@ -39,7 +39,7 @@ export type HostToWebviewMessage =
     }
   | { type: "savedQueries"; queries: SavedQuery[] }
   | { type: "exportDone"; path: string; rowCount: number }
-  | { type: "queryLoaded"; dql: string }
+  | { type: "queryLoaded"; dql: string; chipFilters: FilterCmp[] | null; chipSearch: string | null }
   | { type: "staleSource"; message: string }
   | { type: "revertState"; available: boolean }
   | {
@@ -55,6 +55,10 @@ export type HostToWebviewMessage =
       ok: boolean;
       formatted?: string;
       diagnostics: Diagnostic[];
+      /** Query this plan belongs to. A late plan does not repaint chips for a newer text. */
+      dql?: string;
+      chipFilters?: FilterCmp[] | null;
+      chipSearch?: string | null;
     }
   | {
       type: "queryResult";
@@ -98,7 +102,7 @@ export type HostToWebviewMessage =
 /** Webview → host (validated in panel handler). */
 export type WebviewToHostMessage =
   | { type: "runQuery"; dql: string }
-  | { type: "planDql"; dql: string }
+  | { type: "planDql"; dql: string; columns?: string[] }
   | { type: "saveQuery"; dql: string }
   | { type: "exportQuery"; dql: string; format?: ExportFormat }
   | { type: "loadSavedQuery"; savedAtMs: number }
@@ -122,6 +126,10 @@ export type WebviewToHostMessage =
       search?: string;
       columns: string[];
       project?: boolean;
+      /** Current query when a chip is removed. The host rewrites that text and does not run it. */
+      keepDql?: string;
+      dropFilter?: number;
+      dropSearch?: boolean;
     };
 
 export interface SerializedGrid {
@@ -147,6 +155,17 @@ function validIndex(n: unknown): n is number {
 
 function validColumn(name: unknown): name is string {
   return typeof name === "string" && name.length > 0 && name.length <= 256;
+}
+
+function parseColumnList(raw: unknown): string[] | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.length > 200) return null;
+  const columns: string[] = [];
+  for (const name of raw) {
+    if (!validColumn(name)) return null;
+    columns.push(name);
+  }
+  return columns;
 }
 
 function parseFilters(
@@ -183,7 +202,10 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       if (typeof msg.dql !== "string") return null;
       const dql = msg.dql.trim();
       if (!dql || dql.length > MAX_DQL_LENGTH) return null;
-      return { type: msg.type, dql };
+      if (msg.type === "runQuery") return { type: "runQuery", dql };
+      const columns = parseColumnList(msg.columns);
+      if (columns === null) return null;
+      return { type: "planDql", dql, ...(columns !== undefined ? { columns } : {}) };
     }
     case "saveQuery": {
       if (typeof msg.dql !== "string") return null;
@@ -240,6 +262,20 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       return { type: "reportDql", requestId: msg.requestId, dql: msg.dql };
     }
     case "applyFilter": {
+      const columns = parseColumnList(msg.columns);
+      if (columns === undefined || columns === null) return null;
+      if (typeof msg.keepDql === "string") {
+        const keepDql = msg.keepDql.trim();
+        if (!keepDql || keepDql.length > MAX_DQL_LENGTH) return null;
+        const dropSearch = msg.dropSearch === true;
+        if (msg.dropSearch !== undefined && typeof msg.dropSearch !== "boolean") return null;
+        if (dropSearch) {
+          if (msg.dropFilter !== undefined) return null;
+          return { type: "applyFilter", columns, keepDql, dropSearch: true };
+        }
+        if (!validIndex(msg.dropFilter)) return null;
+        return { type: "applyFilter", columns, keepDql, dropFilter: msg.dropFilter };
+      }
       const column = msg.column;
       const op = msg.op;
       const value = msg.value;
@@ -254,13 +290,7 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       if (search !== undefined && (typeof search !== "string" || search.length > MAX_CELL_LENGTH)) return null;
       const filters = parseFilters(msg.filters);
       if (filters === null) return null;
-      if (!Array.isArray(msg.columns) || msg.columns.length > 200) return null;
       if (msg.project !== undefined && typeof msg.project !== "boolean") return null;
-      const columns: string[] = [];
-      for (const name of msg.columns) {
-        if (!validColumn(name)) return null;
-        columns.push(name);
-      }
       return {
         type: "applyFilter",
         ...(typeof column === "string" && column.length > 0 ? { column } : {}),

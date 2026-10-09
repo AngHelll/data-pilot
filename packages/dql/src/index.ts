@@ -18,6 +18,7 @@ export { parseDql, ParseError } from "./parse.js";
 export { tokenize, TokenizeError, type Token } from "./tokenize.js";
 export { typecheck, type TypecheckResult } from "./typecheck.js";
 export { formatDql } from "./format.js";
+export { dropToolbarChip, readToolbarChips, type ToolbarChips, type ToolbarCmp } from "./toolbar-chips.js";
 
 import type { ColumnMeta, DataValue, Diagnostic } from "@data-pilot/contracts";
 import { parseDql, ParseError } from "./parse.js";
