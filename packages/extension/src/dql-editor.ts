@@ -126,7 +126,9 @@ export function registerDqlEditor(
         columns: opened.handle.columns.map(columnRef),
       });
       refresh(editor.document);
+      const started = Date.now();
       const result = await engine.executeQuery(opened.handle.datasetId, dql);
+      const elapsedMs = Date.now() - started;
       if (generation !== runGeneration) return;
       const payload = {
         datasetPath,
@@ -148,8 +150,8 @@ export function registerDqlEditor(
       } else {
         results.noteResult(generation, payload);
       }
-      if (paintOpenEditorResult(datasetPath, result)) return;
-      await openEditorForResult(datasetPath, result);
+      if (paintOpenEditorResult(datasetPath, result, elapsedMs)) return;
+      await openEditorForResult(datasetPath, result, elapsedMs);
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "message" in err

@@ -63,6 +63,39 @@ test("parseWebviewMessage accepts a column projection and rejects a bad flag", (
   );
 });
 
+test("parseWebviewMessage accepts openQueryInEditor", () => {
+  assert.deepEqual(parseWebviewMessage({ type: "openQueryInEditor" }), { type: "openQueryInEditor" });
+});
+
+test("parseWebviewMessage accepts several where comparisons", () => {
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "applyFilter",
+      filters: [
+        { column: "country", op: "=", value: "MX" },
+        { column: "status", op: "=", value: "ACTIVE" },
+      ],
+      columns: ["country", "status"],
+    }),
+    {
+      type: "applyFilter",
+      filters: [
+        { column: "country", op: "=", value: "MX" },
+        { column: "status", op: "=", value: "ACTIVE" },
+      ],
+      columns: ["country", "status"],
+    },
+  );
+  assert.equal(
+    parseWebviewMessage({
+      type: "applyFilter",
+      filters: [{ column: "country", op: "like", value: "MX" }],
+      columns: ["country"],
+    }),
+    null,
+  );
+});
+
 test("parseWebviewMessage accepts applyFilter", () => {
   assert.deepEqual(
     parseWebviewMessage({

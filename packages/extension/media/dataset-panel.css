@@ -75,6 +75,10 @@ body[data-layout="editor"] .editor-table {
 body[data-layout="editor"] #grid { width: max-content; min-width: 100%; }
 body[data-layout="editor"] #grid th { min-width: 4.5rem; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip { border-radius: 10px; padding: 2px 8px; }
+body[data-layout="editor"] .result-toolbar { width: 100%; }
+body[data-layout="editor"] #export-query { margin-left: auto; }
 .toolbar-label { margin: 0; font-weight: 600; }
 #compare select,
 .toolbar select, .toolbar input {

@@ -60,6 +60,7 @@ export type HostToWebviewMessage =
       type: "queryResult";
       result: SerializedGrid;
       diagnostics: Diagnostic[];
+      elapsedMs?: number;
     }
   | {
       type: "inspectResult";
@@ -105,6 +106,7 @@ export type WebviewToHostMessage =
   | { type: "revertLastEdit" }
   | { type: "webviewReady" }
   | { type: "cancelQuery" }
+  | { type: "openQueryInEditor" }
   | { type: "inspectCell"; rowIndex: number; column: string }
   | { type: "copyText"; text: string }
   | { type: "reportDql"; requestId: string; dql: string }
@@ -116,6 +118,7 @@ export type WebviewToHostMessage =
       column?: string;
       op?: string;
       value?: string;
+      filters?: { column: string; op: string; value?: string }[];
       search?: string;
       columns: string[];
       project?: boolean;
@@ -144,6 +147,29 @@ function validIndex(n: unknown): n is number {
 
 function validColumn(name: unknown): name is string {
   return typeof name === "string" && name.length > 0 && name.length <= 256;
+}
+
+function parseFilters(
+  raw: unknown,
+): { column: string; op: string; value?: string }[] | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.length > 32) return null;
+  const filters: { column: string; op: string; value?: string }[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) return null;
+    const cmp = item as Record<string, unknown>;
+    if (!validColumn(cmp.column)) return null;
+    if (typeof cmp.op !== "string" || !(FILTER_OPS as readonly string[]).includes(cmp.op)) return null;
+    if (cmp.value !== undefined && (typeof cmp.value !== "string" || cmp.value.length > MAX_CELL_LENGTH)) {
+      return null;
+    }
+    filters.push({
+      column: cmp.column,
+      op: cmp.op,
+      ...(typeof cmp.value === "string" ? { value: cmp.value } : {}),
+    });
+  }
+  return filters;
 }
 
 export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
@@ -196,6 +222,8 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       return { type: "webviewReady" };
     case "cancelQuery":
       return { type: "cancelQuery" };
+    case "openQueryInEditor":
+      return { type: "openQueryInEditor" };
     case "inspectCell": {
       if (!validIndex(msg.rowIndex) || !validColumn(msg.column)) return null;
       return { type: "inspectCell", rowIndex: msg.rowIndex, column: msg.column };
@@ -224,6 +252,8 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       }
       if (value !== undefined && (typeof value !== "string" || value.length > MAX_CELL_LENGTH)) return null;
       if (search !== undefined && (typeof search !== "string" || search.length > MAX_CELL_LENGTH)) return null;
+      const filters = parseFilters(msg.filters);
+      if (filters === null) return null;
       if (!Array.isArray(msg.columns) || msg.columns.length > 200) return null;
       if (msg.project !== undefined && typeof msg.project !== "boolean") return null;
       const columns: string[] = [];
@@ -237,6 +267,7 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
         ...(typeof op === "string" && op.length > 0 ? { op } : {}),
         ...(typeof value === "string" ? { value } : {}),
         ...(typeof search === "string" ? { search } : {}),
+        ...(filters !== undefined ? { filters } : {}),
         columns,
         ...(msg.project === true ? { project: true } : {}),
       };

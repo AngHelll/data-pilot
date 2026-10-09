@@ -106,6 +106,7 @@ function editorPanelHtml(
       <span id="dataset-color" class="dataset-color" hidden></span>
       <h1 id="title">Data Pilot</h1>
       <button id="run" type="button">Run query</button>
+      <button id="open-query" class="quiet" type="button">Open query beside</button>
       <button id="cancel" class="quiet" type="button" hidden>Cancel</button>
     </div>
     <p class="hint" id="loading">Loading dataset…</p>
@@ -158,6 +159,7 @@ function editorPanelHtml(
     <div id="panel-data" class="editor-panel" role="tabpanel">
   <section>
     <div class="toolbar" id="grid-toolbar">
+      <div id="filter-chips" class="filter-chips"></div>
       <label class="toolbar-label" for="filter-column">Filter</label>
       <select id="filter-column"><option value="">Column</option></select>
       <select id="filter-op">
@@ -186,10 +188,10 @@ function editorPanelHtml(
     <div id="panel-result" class="editor-panel" role="tabpanel" hidden>
       <p class="hint" id="result-empty">No query yet.</p>
   <section id="result" hidden>
-    <div class="row-actions">
+    <div class="toolbar result-toolbar">
       <label id="result-label">Result</label>
-      <button id="export-query" class="quiet" type="button" hidden>Export result</button>
       <button id="clear-result" class="quiet" type="button">Clear result</button>
+      <button id="export-query" class="quiet" type="button" hidden>Export result</button>
     </div>
     <div class="table-wrap editor-table"><table id="result-grid"><thead></thead><tbody></tbody></table></div>
     <p class="hint" id="result-footer"></p>
@@ -444,7 +446,7 @@ export function ensureDatasetViewSession(
 const panelSubscriptions = new WeakMap<vscode.WebviewPanel, vscode.Disposable>();
 
 const editorSessions = new Set<DatasetViewSession>();
-const pendingExternalResult = new Map<string, QueryResult>();
+const pendingExternalResult = new Map<string, { result: QueryResult; elapsedMs?: number }>();
 
 class DatasetViewSession {
   private readonly nonce: string;
@@ -778,20 +780,21 @@ class DatasetViewSession {
     return this.currentFilePath !== undefined && !this.loadInFlight;
   }
 
-  paintExternalResult(result: QueryResult): void {
+  paintExternalResult(result: QueryResult, elapsedMs?: number): void {
     this.post({
       type: "queryResult",
       result: serializeGrid("query", result, this.columns),
       diagnostics: result.diagnostics,
+      ...(elapsedMs !== undefined ? { elapsedMs } : {}),
     });
   }
 
   private consumePendingResult(filePath: string): void {
     const key = path.resolve(filePath);
-    const result = pendingExternalResult.get(key);
-    if (!result) return;
+    const pending = pendingExternalResult.get(key);
+    if (!pending) return;
     pendingExternalResult.delete(key);
-    this.paintExternalResult(result);
+    this.paintExternalResult(pending.result, pending.elapsedMs);
   }
 
   private async onWebviewMessage(raw: unknown): Promise<void> {
@@ -1051,9 +1054,17 @@ class DatasetViewSession {
       return;
     }
 
+    if (msg.type === "openQueryInEditor") {
+      await vscode.commands.executeCommand("dataPilot.openQueryInEditor");
+      return;
+    }
+
     if (msg.type === "applyFilter") {
       const dql = filterToDql(msg);
-      if (!dql) return;
+      if (!dql) {
+        if (!msg.project) this.post({ type: "queryLoaded", dql: "" });
+        return;
+      }
       try {
         parseDql(dql);
       } catch (err) {
@@ -1098,6 +1109,7 @@ class DatasetViewSession {
       }
 
       this.post({ type: "queryState", running: true });
+      const started = Date.now();
       try {
         const result = await this.engine.executeQuery(boundDatasetId(), msg.dql);
         if (generation !== this.loadGeneration) return;
@@ -1105,6 +1117,7 @@ class DatasetViewSession {
           type: "queryResult",
           result: serializeGrid("query", result),
           diagnostics: result.diagnostics,
+          elapsedMs: Date.now() - started,
         });
       } catch (err) {
         showErr(err);
@@ -1135,22 +1148,31 @@ export function openEditorPaths(): string[] {
 }
 
 /** Paint Result on the open editor for this path. False when that editor is not ready. */
-export function paintOpenEditorResult(filePath: string, result: QueryResult): boolean {
+export function paintOpenEditorResult(
+  filePath: string,
+  result: QueryResult,
+  elapsedMs?: number,
+): boolean {
   const session = editorFor(filePath);
   if (!session?.isReadyForExternalResult()) return false;
-  session.paintExternalResult(result);
+  session.paintExternalResult(result, elapsedMs);
   return true;
 }
 
 /** Open the dataset editor and paint Result after its preview session is posted. */
-export async function openEditorForResult(filePath: string, result: QueryResult): Promise<void> {
+export async function openEditorForResult(
+  filePath: string,
+  result: QueryResult,
+  elapsedMs?: number,
+): Promise<void> {
   const key = path.resolve(filePath);
   const existing = editorFor(filePath);
   if (existing?.isReadyForExternalResult()) {
-    existing.paintExternalResult(result);
+    existing.paintExternalResult(result, elapsedMs);
     return;
   }
-  pendingExternalResult.set(key, result);
+  const pending = { result, ...(elapsedMs !== undefined ? { elapsedMs } : {}) };
+  pendingExternalResult.set(key, pending);
   try {
     await vscode.commands.executeCommand(
       "vscode.openWith",
@@ -1158,13 +1180,13 @@ export async function openEditorForResult(filePath: string, result: QueryResult)
       DATA_PILOT_VIEW_TYPE,
     );
   } catch (err) {
-    if (pendingExternalResult.get(key) === result) pendingExternalResult.delete(key);
+    if (pendingExternalResult.get(key) === pending) pendingExternalResult.delete(key);
     throw err;
   }
   const session = editorFor(filePath);
-  if (session?.isReadyForExternalResult() && pendingExternalResult.get(key) === result) {
+  if (session?.isReadyForExternalResult() && pendingExternalResult.get(key) === pending) {
     pendingExternalResult.delete(key);
-    session.paintExternalResult(result);
+    session.paintExternalResult(result, elapsedMs);
   }
 }
 

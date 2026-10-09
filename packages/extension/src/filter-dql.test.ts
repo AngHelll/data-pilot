@@ -52,6 +52,42 @@ test("filterToDql projects the visible columns without running", () => {
   assert.equal(filterToDql({ columns: ["id", "name"] }), null);
 });
 
+test("filterToDql joins comparisons with and and keeps find", () => {
+  assert.equal(
+    filterToDql({
+      filters: [
+        { column: "country", op: "=", value: "MX" },
+        { column: "status", op: "=", value: "ACTIVE" },
+      ],
+      columns: ["country", "status"],
+    }),
+    'where country = "MX" and status = "ACTIVE"',
+  );
+  assert.equal(
+    filterToDql({
+      filters: [
+        { column: "country", op: "=", value: "MX" },
+        { column: "balance", op: ">", value: "50000" },
+      ],
+      search: "ada",
+      columns: ["name"],
+    }),
+    'find "ada" in name | where country = "MX" and balance > 50000',
+  );
+  assert.equal(
+    filterToDql({
+      filters: [{ column: "name", op: "is not null" }],
+      columns: ["name"],
+    }),
+    "where name is not null",
+  );
+  assert.equal(filterToDql({ filters: [], columns: ["name"] }), null);
+  assert.equal(
+    filterToDql({ filters: [{ column: "country", op: "like", value: "MX" }], columns: ["country"] }),
+    null,
+  );
+});
+
 test("filterToDql leaves an empty draft alone and quotes odd names", () => {
   assert.equal(filterToDql({ columns: ["name"] }), null);
   assert.equal(filterToDql({ search: "   ", columns: ["name"] }), null);

@@ -15,6 +15,9 @@
     let inspectRaw = "";
     let lastGrid = null;
     let lastResult = null;
+    let resultElapsedMs = null;
+    let comparisons = [];
+    let appliedSearch = "";
     let editorTab = "data";
     let hasResult = false;
     let queryOk = false;
@@ -368,7 +371,9 @@
     function syncInspector() {
       const inspector = document.getElementById("inspector");
       if (!inspector) return;
-      inspector.hidden = editorTab !== "data" || !selectedPos;
+      const onTable = editorTab === "data" || editorTab === "result";
+      const located = !!(selectedPos && selectedPos.sourceRow != null);
+      inspector.hidden = !onTable || !located;
     }
 
     function syncEditorFooter() {
@@ -402,11 +407,14 @@
     }
 
     function resultLine(grid) {
-      return ["Result", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)].join(" · ");
+      const parts = ["Result", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)];
+      if (resultElapsedMs != null) parts.push(resultElapsedMs + " ms");
+      return parts.join(" · ");
     }
 
     function clearResult() {
       lastResult = null;
+      resultElapsedMs = null;
       hasResult = false;
       syncResultIdentity();
       if (els.resultEmpty) els.resultEmpty.hidden = false;
@@ -886,6 +894,60 @@
         filterValue.disabled = nullOp;
       });
     }
+    function cmpText(cmp) {
+      if (cmp.op === "is null" || cmp.op === "is not null") return cmp.column + " " + cmp.op;
+      return cmp.column + " " + cmp.op + " " + cmp.value;
+    }
+
+    function renderFilterChips() {
+      const host = document.getElementById("filter-chips");
+      if (!host) return;
+      host.replaceChildren();
+      comparisons.forEach((cmp, index) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "filter-chip";
+        text(btn, cmpText(cmp) + " ×");
+        btn.addEventListener("click", () => {
+          comparisons = comparisons.filter((_, i) => i !== index);
+          renderFilterChips();
+          postApplied(false);
+        });
+        host.appendChild(btn);
+      });
+      if (appliedSearch) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "filter-chip";
+        text(btn, appliedSearch + " ×");
+        btn.addEventListener("click", () => {
+          appliedSearch = "";
+          const searchEl = document.getElementById("filter-search");
+          if (searchEl) searchEl.value = "";
+          renderFilterChips();
+          postApplied(false);
+        });
+        host.appendChild(btn);
+      }
+    }
+
+    function postApplied(project) {
+      const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
+      if (project && columns.length === 0) return;
+      if (!project && comparisons.length === 0 && !appliedSearch) {
+        vscode.postMessage({ type: "applyFilter", columns, filters: [] });
+        return;
+      }
+      const message = {
+        type: "applyFilter",
+        columns,
+        filters: comparisons.map((cmp) => ({ column: cmp.column, op: cmp.op, value: cmp.value })),
+      };
+      if (appliedSearch) message.search = appliedSearch;
+      if (project) message.project = true;
+      vscode.postMessage(message);
+    }
+
     function postFilter(project) {
       const columnEl = document.getElementById("filter-column");
       const column = columnEl ? columnEl.value : "";
@@ -893,16 +955,19 @@
       const value = filterValue ? filterValue.value : "";
       const searchEl = document.getElementById("filter-search");
       const search = searchEl ? searchEl.value.trim() : "";
-      const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
-      if (!project && !search && !(column && op)) return;
-      if (project && columns.length === 0) return;
-      const message = { type: "applyFilter", columns };
-      if (column) message.column = column;
-      if (op) message.op = op;
-      if (value) message.value = value;
-      if (search) message.search = search;
-      if (project) message.project = true;
-      vscode.postMessage(message);
+      if (project) {
+        postApplied(true);
+        return;
+      }
+      if (!(column && op) && !search) return;
+      if (column && op) comparisons.push({ column, op, value });
+      if (search) appliedSearch = search;
+      if (columnEl) columnEl.value = "";
+      if (filterOp) filterOp.value = "";
+      if (filterValue) filterValue.value = "";
+      if (searchEl) searchEl.value = "";
+      renderFilterChips();
+      postApplied(false);
     }
     if (applyFilter) applyFilter.addEventListener("click", () => postFilter(false));
     const columnPicker = document.getElementById("column-picker");
@@ -932,6 +997,13 @@
         if (!dql) return;
         clearTimeout(planTimer);
         vscode.postMessage({ type: "planDql", dql });
+      });
+    }
+
+    const openQuery = document.getElementById("open-query");
+    if (openQuery) {
+      openQuery.addEventListener("click", () => {
+        vscode.postMessage({ type: "openQueryInEditor" });
       });
     }
 
@@ -1213,6 +1285,9 @@
       if (msg.type === "queryResult") {
         renderDqlDiagnostics(msg.diagnostics);
         queryOk = !(msg.diagnostics || []).some((d) => d.severity === "error");
+        resultElapsedMs = typeof msg.elapsedMs === "number" && msg.elapsedMs >= 0
+          ? Math.round(msg.elapsedMs)
+          : null;
         renderResult(msg.result);
         syncQueryActionButtons();
         showEditorTab("result");
