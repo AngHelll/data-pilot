@@ -26,15 +26,11 @@ import { createWebviewNonce, isCspNonce } from "./nonce";
 /** VS Code custom editor view type — use with `vscode.openWith` and editor associations. */
 export const DATA_PILOT_VIEW_TYPE = "dataPilot.dataset";
 
-export type DatasetViewLayout = "explorer" | "editor";
-
 export interface MountDatasetViewOptions {
   engine: ExtensionEngineHost;
   savedQueryStore: SavedQueryStore;
   extensionUri: vscode.Uri;
   title: string;
-  /** Explorer keeps the side-panel page. The custom editor uses the wide table. */
-  layout?: DatasetViewLayout;
 }
 
 function serializeGrid(
@@ -271,96 +267,8 @@ function panelHtml(
   extensionUri: vscode.Uri,
   nonce: string,
   title: string,
-  layout: DatasetViewLayout = "explorer",
 ): string {
-  if (layout === "editor") {
-    return editorPanelHtml(webview, extensionUri, nonce, title);
-  }
-  if (!isCspNonce(nonce)) {
-    throw new Error("Webview nonce is not a valid CSP nonce");
-  }
-  const styleUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(extensionUri, "media", "dataset-panel.css"),
-  );
-  const scriptUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(extensionUri, "media", "dataset-panel.js"),
-  );
-  const csp = [
-    "default-src 'none'",
-    `style-src ${webview.cspSource}`,
-    `script-src 'nonce-${nonce}'`,
-  ].join("; ");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(title)}</title>
-  <link rel="stylesheet" href="${escapeHtml(String(styleUri))}" />
-</head>
-<body>
-  <h1 id="title">Data Pilot</h1>
-  <p class="hint" id="loading">Loading dataset…</p>
-  <div class="meta" id="meta"></div>
-  <div id="trust"></div>
-  <div class="row-actions" id="stale-row" hidden>
-    <span class="warn" id="stale-banner"></span>
-    <button id="reopen" type="button">Reopen dataset</button>
-  </div>
-  <section id="describe-section">
-    <label>Dataset</label>
-    <p class="hint" id="describe-meta"></p>
-    <div class="table-wrap schema-wrap">
-      <table id="schema"><thead><tr>
-        <th>Column</th><th>Type</th><th>null (sample)</th><th>missing (sample)</th>
-      </tr></thead><tbody></tbody></table>
-    </div>
-  </section>
-  <section>
-    <label>Parse &amp; ingest warnings</label>
-    <ul class="diag" id="ingest-diagnostics"></ul>
-    <p class="hint" id="ingest-empty">No warnings in the bounded preview sample.</p>
-  </section>
-  <section>
-    <label for="dql">DQL 0.1</label>
-    <textarea id="dql" placeholder='where country = "MX" | take 20'></textarea>
-    <div class="row-actions">
-      <button id="plan" type="button">Check query</button>
-      <button id="run" type="button">Run query</button>
-      <button id="save-query" type="button" disabled>Save query</button>
-      <button id="export-query" type="button" disabled>Export result</button>
-      <button id="cancel" type="button" disabled>Cancel</button>
-    </div>
-    <div class="row-actions">
-      <label class="saved-label" for="saved-queries">Saved</label>
-      <select id="saved-queries" disabled><option value="">— load saved query —</option></select>
-    </div>
-    <ul class="diag" id="dql-diagnostics"></ul>
-    <p class="hint" id="dql-formatted"></p>
-    <p class="cost" id="cost"></p>
-  </section>
-  <section>
-    <label id="grid-label">Preview</label>
-    <div class="table-wrap"><table id="grid"><thead></thead><tbody></tbody></table></div>
-  </section>
-  <section id="inspect-section">
-    <label>Cell inspect</label>
-    <p id="inspect-detail">Click a cell to inspect raw value and type.</p>
-  </section>
-  <section id="edit-section">
-    <label>Fixture edit (trusted)</label>
-    <div class="row-actions">
-      <input id="edit-value" class="cell-edit" type="text" placeholder="New raw value" disabled />
-      <button id="preview-edit" type="button" disabled>Preview diff</button>
-      <button id="apply-edit" type="button" disabled>Apply save</button>
-    </div>
-    <pre class="diff" id="edit-diff"></pre>
-  </section>
-  <script nonce="${escapeHtml(nonce)}" src="${escapeHtml(String(scriptUri))}"></script>
-</body>
-</html>`;
+  return editorPanelHtml(webview, extensionUri, nonce, title);
 }
 
 function safePreview(raw: unknown): string {
@@ -476,7 +384,7 @@ class DatasetViewSession {
     private readonly options: MountDatasetViewOptions,
   ) {
     this.nonce = createWebviewNonce();
-    if ((options.layout ?? "explorer") === "editor") editorSessions.add(this);
+    editorSessions.add(this);
     this.surface.webview.options = {
       enableScripts: true,
       localResourceRoots: [options.extensionUri],
@@ -491,7 +399,6 @@ class DatasetViewSession {
       options.extensionUri,
       this.nonce,
       options.title,
-      options.layout ?? "explorer",
     );
     logInfo("Dataset webview HTML assigned after message listener");
     this.peersSub = options.engine.onSessionsChanged(() => {

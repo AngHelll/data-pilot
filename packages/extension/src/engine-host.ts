@@ -4,6 +4,7 @@ import {
   type Diagnostic,
   type DatasetHandle,
   type KeyDiffResult,
+  DEFAULT_EDITOR_QUERY_BUDGET,
   DEFAULT_PREVIEW_BUDGET,
   type ExportArtifact,
   type ExportFormat,
@@ -353,7 +354,7 @@ export class ExtensionEngineHost {
       const response = await host.requestWithId(
         requestId,
         "executeQuery",
-        { datasetId, dql, budget: { maxRows: 500 } },
+        { datasetId, dql, budget: { maxRows: DEFAULT_EDITOR_QUERY_BUDGET.maxRows } },
         { timeoutMs: 120_000 },
       );
       if (!response.ok) throw ipcError(response);

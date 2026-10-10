@@ -216,7 +216,11 @@ export function isUntrustedAllowed(op: EngineOp): boolean {
   return (UNTRUSTED_ALLOWED_OPS as readonly string[]).includes(op);
 }
 
-/** Default preview budgets (Phase 0 proposal; overridable per call). */
+/**
+ * Three row ceilings, kept apart on purpose.
+ * Preview samples the file. The editor Run paints one page. Export returns one string.
+ */
+/** Preview sample: 200 rows or 1 MiB, whichever comes first. */
 export const DEFAULT_PREVIEW_BUDGET: Required<
   Pick<QueryBudget, "maxRows" | "maxBytes">
 > = {
@@ -224,7 +228,12 @@ export const DEFAULT_PREVIEW_BUDGET: Required<
   maxBytes: 1024 * 1024,
 };
 
-/** Bounded export from a DQL result (honest scan — not unbounded). */
+/** Editor Run. Not the preview sample and not the export cap. */
+export const DEFAULT_EDITOR_QUERY_BUDGET: Required<Pick<QueryBudget, "maxRows">> = {
+  maxRows: 500,
+};
+
+/** Bounded export from a DQL result (honest scan — not unbounded). 10 000 rows or 10 MiB. */
 export const DEFAULT_EXPORT_BUDGET: Required<
   Pick<QueryBudget, "maxRows" | "maxBytes">
 > = {
