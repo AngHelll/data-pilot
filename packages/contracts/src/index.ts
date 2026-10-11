@@ -263,6 +263,8 @@ export interface OpenDatasetPayload {
 export interface PreviewPayload {
   datasetId: string;
   budget?: QueryBudget;
+  /** File rows to skip before this preview page. 0 is the first page. */
+  offset?: number;
   /** Phase 0 spike hooks — ignored for real dataset preview. */
   allocateMb?: number;
   workMs?: number;
@@ -273,6 +275,14 @@ export interface ExecuteQueryPayload {
   datasetId: string;
   dql: string;
   params?: Record<string, DataValue | string | number | boolean | null>;
+  budget?: QueryBudget;
+  /** Matched rows to skip before this result page. 0 is the first page. */
+  offset?: number;
+}
+
+export interface FetchPagePayload {
+  datasetId: string;
+  offset: number;
   budget?: QueryBudget;
 }
 
@@ -306,6 +316,8 @@ export interface SavedQuery {
   savedAtMs: number;
   /** Dataset file this query was saved against. Absent on queries saved before this field. */
   datasetPath?: string;
+  /** Display name. Absent means the tree shows the DQL text. The child does not read it. */
+  name?: string;
 }
 
 export interface CompareDatasetsPayload {

@@ -21,6 +21,7 @@ import {
   type TrustMode,
   isUntrustedAllowed,
 } from "@data-pilot/contracts";
+import { fetchPagePayloadError } from "@data-pilot/engine-stream";
 import {
   CompareService,
   DatasetService,
@@ -216,6 +217,31 @@ async function handle(req: IpcRequest): Promise<void> {
           p.dql,
           p.params,
           p.budget ?? {},
+          req.requestId,
+          controller.signal,
+          typeof p.offset === "number" ? p.offset : 0,
+        );
+        ok(req.requestId, result);
+        return;
+      }
+      case "fetchPage": {
+        const raw = asRecord(req.payload);
+        const payloadError = fetchPagePayloadError(raw);
+        if (payloadError) {
+          fail(req.requestId, {
+            code: payloadError.startsWith("Page offset") ? "page-offset" : "invalid-payload",
+            severity: "error",
+            message: payloadError,
+          });
+          return;
+        }
+        const datasetId = String(raw.datasetId ?? "");
+        const offset = raw.offset as number;
+        const budget = raw.budget;
+        const result = await datasets.fetchPage(
+          datasetId,
+          offset,
+          budget && typeof budget === "object" ? (budget as PreviewPayload["budget"]) : undefined,
           req.requestId,
           controller.signal,
         );

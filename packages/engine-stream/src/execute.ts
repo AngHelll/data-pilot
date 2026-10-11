@@ -10,6 +10,7 @@ import {
 } from "@data-pilot/contracts";
 import type { DqlQuery, Expr, Predicate, Stage } from "@data-pilot/dql";
 import { classifySample } from "./cell.js";
+import { pageOffsetError } from "./page-offset.js";
 import type { DatasetStore } from "./session.js";
 
 type Tri = true | false | "unknown";
@@ -259,9 +260,24 @@ async function scanQuery(
   budget: QueryBudget,
   requestId: string,
   signal?: AbortSignal,
+  offset = 0,
 ): Promise<QueryResult> {
-  const stale = await store.assertFresh(datasetId);
   const session = store.get(datasetId);
+  const offsetError = pageOffsetError(offset);
+  if (offsetError) {
+    return {
+      requestId,
+      datasetId,
+      revisionId: session.handle.revision.revisionId,
+      columns: session.header,
+      rows: [],
+      rowCountReturned: 0,
+      completion: "error",
+      scope: "unknown",
+      diagnostics: [{ code: "page-offset", severity: "error", message: offsetError }],
+    };
+  }
+  const stale = await store.assertFresh(datasetId);
   const diagnostics: Diagnostic[] = [...session.diagnostics];
   if (stale) {
     return {
@@ -388,6 +404,8 @@ async function scanQuery(
       if (takeStage && outRows.length >= takeStage.count) break;
       continue;
     }
+
+    if (offset > 0 && matchCount <= offset) continue;
 
     if (maxRows !== undefined && outRows.length >= maxRows) {
       // Still need to know if more matches exist for completion honesty when take is set —
@@ -636,6 +654,7 @@ async function scanQuery(
       ? { sourceRowIndexes }
       : {}),
     rowCountReturned: outRows.length,
+    ...(completion === "complete" ? { totalCount: offset + outRows.length } : {}),
     completion,
     scope: completion === "complete" ? "full" : "prefix",
     diagnostics,
@@ -652,7 +671,8 @@ export async function executeDql(
   budget: QueryBudget,
   requestId: string,
   signal?: AbortSignal,
+  offset = 0,
 ): Promise<QueryResult> {
-  const result = await scanQuery(store, datasetId, query, params, budget, requestId, signal);
+  const result = await scanQuery(store, datasetId, query, params, budget, requestId, signal, offset);
   return store.seal(datasetId, result);
 }

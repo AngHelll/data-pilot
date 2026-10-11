@@ -54,9 +54,16 @@ export class ExtensionEngineHost {
 
   constructor(private readonly extensionContext: vscode.ExtensionContext) {}
 
-  /** Sessions already open in this window. The tree does not scan the workspace. */
+  /** Sessions already open in this window. */
   listOpenSessions(): OpenDatasetSession[] {
     return this.sessions.entries();
+  }
+
+  /** Diagnostics stored when this file was opened. Does not describe again. */
+  diagnosticsFor(filePath: string): Diagnostic[] {
+    const datasetId = this.sessions.lookup(filePath);
+    if (!datasetId) return [];
+    return this.openHandles.get(datasetId)?.diagnostics ?? [];
   }
 
   columnNames(datasetId: string): string[] {
@@ -336,7 +343,7 @@ export class ExtensionEngineHost {
     return response.result as PlanResult;
   }
 
-  async executeQuery(datasetId: string, dql: string): Promise<QueryResult> {
+  async executeQuery(datasetId: string, dql: string, offset = 0): Promise<QueryResult> {
     const blocked = assertOpAllowed(trustContext(), "executeQuery");
     if (blocked) throw blocked;
     if (!datasetId) {
@@ -354,7 +361,12 @@ export class ExtensionEngineHost {
       const response = await host.requestWithId(
         requestId,
         "executeQuery",
-        { datasetId, dql, budget: { maxRows: DEFAULT_EDITOR_QUERY_BUDGET.maxRows } },
+        {
+          datasetId,
+          dql,
+          budget: { maxRows: DEFAULT_EDITOR_QUERY_BUDGET.maxRows },
+          ...(offset > 0 ? { offset } : {}),
+        },
         { timeoutMs: 120_000 },
       );
       if (!response.ok) throw ipcError(response);
@@ -362,6 +374,34 @@ export class ExtensionEngineHost {
     } finally {
       this.activeQueryRequestId = undefined;
     }
+  }
+
+  /** Another preview window. This does not run a query. */
+  async fetchPage(datasetId: string, offset: number): Promise<QueryResult> {
+    const blocked = assertOpAllowed(trustContext(), "fetchPage");
+    if (blocked) throw blocked;
+    if (!datasetId) {
+      throw {
+        code: "no-dataset",
+        severity: "error",
+        message: "Open a dataset first",
+      } satisfies Diagnostic;
+    }
+    const host = await this.ensureStarted();
+    const response = await host.request(
+      "fetchPage",
+      {
+        datasetId,
+        offset,
+        budget: {
+          maxRows: DEFAULT_PREVIEW_BUDGET.maxRows,
+          maxBytes: DEFAULT_PREVIEW_BUDGET.maxBytes,
+        },
+      },
+      { timeoutMs: 120_000 },
+    );
+    if (!response.ok) throw ipcError(response);
+    return response.result as QueryResult;
   }
 
   async compareDatasets(leftId: string, rightId: string, column: string): Promise<KeyDiffResult> {

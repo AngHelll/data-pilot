@@ -13,8 +13,12 @@ import {
   type DqlDocumentLink,
 } from "./dql-link";
 import { DqlResultView } from "./dql-result-view";
+import { planLooksRunnable } from "./describe-serialize";
 import type { ExtensionEngineHost } from "./engine-host";
 import { workspaceTrustMode } from "./engine-host";
+import { activityOutcome, activityText } from "./editor-chrome";
+import type { HostJobLog } from "./host-jobs";
+import { installEditorActivity, noteEditorActivity, renderEditorActivity } from "./editor-activity";
 import { formatCells } from "./format-cell";
 import {
   activeDatasetEditorSession,
@@ -23,7 +27,7 @@ import {
   paintOpenEditorResult,
   type DatasetQuerySurface,
 } from "./webview/dataset-panel";
-import { savedQueryLink } from "./saved-query-tree";
+import { savedQueryDisplayName, savedQueryLink } from "./saved-query-tree";
 import { SavedQueryStore } from "./saved-query-store";
 
 const LINK_KEY = "dataPilot.dqlLinks.v1";
@@ -33,6 +37,7 @@ export function registerDqlEditor(
   context: vscode.ExtensionContext,
   engine: ExtensionEngineHost,
   savedQueries: SavedQueryStore,
+  jobs: HostJobLog,
 ): void {
   const lenses = new vscode.EventEmitter<void>();
   const targetHub = { sync: () => undefined as void };
@@ -54,7 +59,9 @@ export function registerDqlEditor(
     }
     if (document) results.noteActive(datasetPath);
     lenses.fire();
+    renderEditorActivity();
   };
+  installEditorActivity(context, (documentUri) => links.get(documentUri)?.datasetPath);
   const diagnostics = vscode.languages.createDiagnosticCollection(LANGUAGE_ID);
   const results = new DqlResultView(context.extensionUri);
   let runGeneration = 0;
@@ -118,6 +125,9 @@ export function registerDqlEditor(
       datasetPath = picked.path;
     }
     const generation = ++runGeneration;
+    let started = 0;
+    let ranQuery = false;
+    let jobId: string | undefined;
     try {
       const opened = await engine.openDataset(datasetPath);
       if (generation !== runGeneration) return;
@@ -126,9 +136,37 @@ export function registerDqlEditor(
         columns: opened.handle.columns.map(columnRef),
       });
       refresh(editor.document);
-      const started = Date.now();
+      const plan = await engine.planQuery(opened.handle.datasetId, dql);
+      if (generation !== runGeneration) return;
+      if (!planLooksRunnable(plan.diagnostics)) {
+        const message =
+          plan.diagnostics.find((item) => item.severity === "error")?.message ??
+          "This query cannot run";
+        void vscode.window.showErrorMessage(message);
+        return;
+      }
+      const resolved = path.resolve(datasetPath);
+      const queryName = savedQueryDisplayName(savedQueries.list(), dql, resolved);
+      started = Date.now();
+      ranQuery = true;
+      jobId = jobs.begin({
+        kind: "query",
+        filePath: datasetPath,
+        fileName: path.basename(datasetPath),
+        dql,
+        ...(queryName ? { name: queryName } : {}),
+      }).id;
       const result = await engine.executeQuery(opened.handle.datasetId, dql);
       const elapsedMs = Date.now() - started;
+      jobs.finish(jobId, {
+        outcome: activityOutcome("query", result.completion, false),
+        elapsedMs,
+        cancelled: result.completion === "cancelled",
+      });
+      noteEditorActivity(
+        datasetPath,
+        activityText("query", activityOutcome("query", result.completion, false), elapsedMs),
+      );
       if (generation !== runGeneration) return;
       const payload = {
         datasetPath,
@@ -138,7 +176,6 @@ export function registerDqlEditor(
         completion: result.completion,
         diagnostics: result.diagnostics.map((item) => item.message),
       };
-      const resolved = path.resolve(datasetPath);
       const placement = chooseResultPlacement({
         besidePanelOpen: results.isOpen(),
         datasetPath: resolved,
@@ -150,9 +187,18 @@ export function registerDqlEditor(
       } else {
         results.noteResult(generation, payload);
       }
-      if (paintOpenEditorResult(datasetPath, result, elapsedMs)) return;
-      await openEditorForResult(datasetPath, result, elapsedMs);
+      if (paintOpenEditorResult(datasetPath, result, elapsedMs, dql)) return;
+      await openEditorForResult(datasetPath, result, elapsedMs, dql);
     } catch (err) {
+      if (jobId) {
+        jobs.finish(jobId, {
+          outcome: activityOutcome("query", undefined, true),
+          elapsedMs: Date.now() - started,
+        });
+      }
+      if (ranQuery) {
+        noteEditorActivity(datasetPath, activityText("query", "failed", Date.now() - started));
+      }
       const message =
         typeof err === "object" && err !== null && "message" in err
           ? String((err as { message: unknown }).message)

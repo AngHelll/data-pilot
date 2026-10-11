@@ -5,8 +5,12 @@ import {
   associateSavedQuery,
   nextSavedQueries,
   rememberDatasetPath,
+  renameSavedQuery,
   savedQueryLink,
+  savedQueryNeedsName,
   savedQueryPresentation,
+  withoutAllSavedQueries,
+  withoutSavedQuery,
 } from "./saved-query-tree.js";
 
 function query(dql: string, datasetPath?: string): SavedQuery {
@@ -18,6 +22,32 @@ function query(dql: string, datasetPath?: string): SavedQuery {
     ...(datasetPath ? { datasetPath } : {}),
   };
 }
+
+test("a named query shows the name and a repeat save keeps it", () => {
+  const named = { ...query('where country = "MX"', "/data/tiny.csv"), name: "Active MX users" };
+  assert.equal(savedQueryPresentation(named).label, "Active MX users");
+  const again = {
+    ...query('where country = "MX"', "/data/tiny.csv"),
+    savedAtMs: 8,
+    schemaColumnNames: ["country", "id"],
+  };
+  const next = nextSavedQueries([named], again);
+  assert.equal(next.length, 1);
+  assert.equal(next[0]?.name, "Active MX users");
+  assert.equal(next[0]?.savedAtMs, 8);
+  assert.equal(savedQueryNeedsName([named], again), false);
+  assert.equal(savedQueryNeedsName([], again), true);
+});
+
+test("rename changes the name and leaves the save time", () => {
+  const row = { ...query('where country = "MX"', "/data/tiny.csv"), name: "Old" };
+  const renamed = renameSavedQuery([row], row, "Active MX users");
+  assert.equal(renamed[0]?.name, "Active MX users");
+  assert.equal(renamed[0]?.savedAtMs, row.savedAtMs);
+  const cleared = renameSavedQuery(renamed, renamed[0]!, "  ");
+  assert.equal(cleared[0]?.name, undefined);
+  assert.equal(savedQueryPresentation(cleared[0]!).label, 'where country = "MX"');
+});
 
 test("a saved query with a path names that file", () => {
   const shown = savedQueryPresentation(query('where country = "MX"', "/data/tiny.csv"));
@@ -74,6 +104,18 @@ test("associating one row leaves a different query without a path", () => {
   const next = associateSavedQuery([other, loose], loose, "/data/tiny.csv");
   assert.equal(next.find((row) => row.dql === "where id = 1")?.datasetPath, undefined);
   assert.equal(next.find((row) => row.dql === 'where country = "MX"')?.datasetPath, "/data/tiny.csv");
+});
+
+test("delete removes one row and leaves the other", () => {
+  const keep = query("where id = 1", "/data/tiny.csv");
+  const drop = { ...query('where country = "MX"', "/data/tiny.csv"), savedAtMs: 4 };
+  const twin = { ...drop, savedAtMs: 9 };
+  const next = withoutSavedQuery([keep, drop, twin], drop);
+  assert.deepEqual(next, [keep, twin]);
+});
+
+test("delete all leaves the list empty", () => {
+  assert.deepEqual(withoutAllSavedQueries(), []);
 });
 
 test("associating a row writes its path and collapses an existing pair", () => {

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { SavedQuery } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
 import {
   DATA_PILOT_VIEW_TYPE,
@@ -9,9 +10,13 @@ import { openDatasetUri } from "./open-dataset";
 import { DatasetTreeProvider } from "./dataset-tree";
 import { SavedQueryTreeProvider } from "./saved-query-view";
 import { registerDqlEditor } from "./dql-editor";
-import { dataPilotLog, logError, logInfo } from "./log";
+import { HostJobLog, hostJobOpen, type HostJob } from "./host-jobs";
+import { HostJobTreeProvider } from "./host-job-view";
+import { CELL_INSPECTOR_VIEW_ID, CellInspectorView } from "./cell-inspector-view";
+import { revealDatasetTab } from "./webview/dataset-panel";
+import { dataPilotLog, logInfo } from "./log";
 import { SavedQueryStore } from "./saved-query-store";
-import { datasetTabPaths, isDatasetUri } from "./dataset-uri";
+import { isDatasetUri } from "./dataset-uri";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -22,6 +27,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   engine = new ExtensionEngineHost(context);
   engine.registerTrustListener();
   savedQueryStore = new SavedQueryStore(context);
+  const jobs = new HostJobLog();
 
   if (!engine || !savedQueryStore) return;
 
@@ -35,54 +41,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       DATA_PILOT_VIEW_TYPE,
-      new DatasetCustomEditorProvider(context, engine, savedQueryStore),
+      new DatasetCustomEditorProvider(context, engine, savedQueryStore, jobs),
       { webviewOptions: { retainContextWhenHidden: true } },
     ),
   );
 
   const datasetsTree = new DatasetTreeProvider(engine);
+  const datasetsView = vscode.window.createTreeView("dataPilot.datasets", {
+    treeDataProvider: datasetsTree,
+  });
+  datasetsTree.attach(datasetsView);
   const savedQueriesTree = new SavedQueryTreeProvider(savedQueryStore);
+  const jobsTree = new HostJobTreeProvider(jobs);
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("dataPilot.datasets", datasetsTree),
+    datasetsView,
     datasetsTree,
     vscode.window.registerTreeDataProvider("dataPilot.savedQueries", savedQueriesTree),
     savedQueriesTree,
-  );
-
-  const rememberOpenDatasetTabs = async (): Promise<void> => {
-    if (!engine) return;
-    const open = new Set(engine.listOpenSessions().map((session) => session.filePath));
-    const paths: string[] = [];
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        const input = tab.input;
-        if (input instanceof vscode.TabInputText) paths.push(input.uri.fsPath);
-      }
-    }
-    for (const filePath of datasetTabPaths(paths)) {
-      if (open.has(filePath)) continue;
-      try {
-        await engine.openDataset(filePath);
-        open.add(filePath);
-      } catch (err) {
-        logError(
-          `Could not list open dataset ${filePath}`,
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
-  };
-
-  let tabTimer: ReturnType<typeof setTimeout> | undefined;
-  context.subscriptions.push(
-    vscode.window.tabGroups.onDidChangeTabs(() => {
-      if (tabTimer) clearTimeout(tabTimer);
-      tabTimer = setTimeout(() => {
-        void rememberOpenDatasetTabs();
-      }, 300);
+    vscode.window.registerTreeDataProvider("dataPilot.jobs", jobsTree),
+    jobsTree,
+    vscode.window.registerWebviewViewProvider(CELL_INSPECTOR_VIEW_ID, new CellInspectorView(context.extensionUri), {
+      webviewOptions: { retainContextWhenHidden: true },
     }),
   );
-  void rememberOpenDatasetTabs();
 
   const openFromUri = async (uri: vscode.Uri): Promise<void> => {
     if (!engine || !savedQueryStore) return;
@@ -126,6 +107,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     dataPilotLog().show(true);
   });
 
+  const renameSavedQueryCmd = vscode.commands.registerCommand(
+    "dataPilot.renameSavedQuery",
+    async (query?: SavedQuery) => {
+      if (!query || typeof query.dql !== "string" || !savedQueryStore) return;
+      const picked = await vscode.window.showInputBox({
+        title: "Rename saved query",
+        value: query.name ?? "",
+        prompt: "Leave empty to show the query text.",
+      });
+      if (picked === undefined) return;
+      savedQueryStore.rename(query, picked);
+    },
+  );
+
+  const deleteSavedQueryCmd = vscode.commands.registerCommand(
+    "dataPilot.deleteSavedQuery",
+    (query?: SavedQuery) => {
+      if (!query || typeof query.dql !== "string" || !savedQueryStore) return;
+      savedQueryStore.remove(query);
+    },
+  );
+
+  const deleteAllSavedQueriesCmd = vscode.commands.registerCommand(
+    "dataPilot.deleteAllSavedQueries",
+    async () => {
+      if (!savedQueryStore) return;
+      const choice = await vscode.window.showWarningMessage(
+        "Delete all saved queries?",
+        { modal: true },
+        "Delete",
+      );
+      if (choice !== "Delete") return;
+      savedQueryStore.clear();
+    },
+  );
+
   const openCustomEditorCmd = vscode.commands.registerCommand(
     "dataPilot.openDatasetCustomEditor",
     async (uri?: vscode.Uri) => {
@@ -139,9 +156,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   );
 
-  registerDqlEditor(context, engine, savedQueryStore);
+  registerDqlEditor(context, engine, savedQueryStore, jobs);
 
-  context.subscriptions.push(openCmd, openResourceCmd, showLogCmd, openCustomEditorCmd);
+  const openHostJobCmd = vscode.commands.registerCommand(
+    "dataPilot.openHostJob",
+    async (job?: HostJob) => {
+      if (!job || typeof job.filePath !== "string" || !engine || !savedQueryStore) return;
+      const target = hostJobOpen(job);
+      if (target === "none") return;
+      const opened = await openDatasetUri(engine, context, savedQueryStore, vscode.Uri.file(job.filePath));
+      if (opened) revealDatasetTab(job.filePath, target);
+    },
+  );
+
+  const cancelHostJobCmd = vscode.commands.registerCommand(
+    "dataPilot.cancelHostJob",
+    async (job?: HostJob) => {
+      if (!job || !engine) return;
+      if (!jobs.cancel(job.id)) return;
+      await engine.cancelActiveQuery();
+    },
+  );
+
+  context.subscriptions.push(
+    openCmd,
+    openResourceCmd,
+    showLogCmd,
+    openCustomEditorCmd,
+    deleteSavedQueryCmd,
+    deleteAllSavedQueriesCmd,
+    renameSavedQueryCmd,
+    openHostJobCmd,
+    cancelHostJobCmd,
+  );
   context.subscriptions.push({
     dispose: () => {
       void engine?.stop();

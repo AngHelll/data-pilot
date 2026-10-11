@@ -24,8 +24,15 @@
     "onCommand:dataPilot.openDatasetCustomEditor",
     "onView:dataPilot.datasets",
     "onView:dataPilot.savedQueries",
+    "onView:dataPilot.jobs",
+    "onView:dataPilot.cellInspector",
+    "onCommand:dataPilot.openHostJob",
+    "onCommand:dataPilot.cancelHostJob",
     "onCommand:dataPilot.openSavedQuery",
     "onCommand:dataPilot.associateSavedQuery",
+    "onCommand:dataPilot.deleteSavedQuery",
+    "onCommand:dataPilot.deleteAllSavedQueries",
+    "onCommand:dataPilot.renameSavedQuery",
     "onLanguage:data-pilot-dql",
     "onCommand:dataPilot.openQueryInEditor",
     "onCommand:dataPilot.runDql",
@@ -96,6 +103,29 @@
       {
         "command": "dataPilot.associateSavedQuery",
         "title": "Data Pilot: Associate with open dataset"
+      },
+      {
+        "command": "dataPilot.renameSavedQuery",
+        "title": "Data Pilot: Rename Saved Query"
+      },
+      {
+        "command": "dataPilot.deleteSavedQuery",
+        "title": "Data Pilot: Delete Saved Query",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dataPilot.deleteAllSavedQueries",
+        "title": "Data Pilot: Delete All Saved Queries",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dataPilot.openHostJob",
+        "title": "Data Pilot: Open Job"
+      },
+      {
+        "command": "dataPilot.cancelHostJob",
+        "title": "Cancel",
+        "icon": "$(debug-stop)"
       }
     ],
     "languages": [
@@ -130,17 +160,30 @@
         {
           "id": "dataPilot.savedQueries",
           "name": "Saved Queries"
+        },
+        {
+          "id": "dataPilot.jobs",
+          "name": "Jobs"
+        },
+        {
+          "id": "dataPilot.cellInspector",
+          "name": "Cell inspector",
+          "type": "webview"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "dataPilot.datasets",
-        "contents": "No open datasets.\n[Open Dataset](command:dataPilot.openDataset)"
+        "contents": "No CSV or JSONL files in this folder.\n[Open Dataset](command:dataPilot.openDataset)"
       },
       {
         "view": "dataPilot.savedQueries",
         "contents": "No saved queries."
+      },
+      {
+        "view": "dataPilot.jobs",
+        "contents": "No recent jobs."
       }
     ],
     "customEditors": [
@@ -202,6 +245,28 @@
           "command": "dataPilot.associateSavedQuery",
           "when": "view == dataPilot.savedQueries && viewItem == savedQuery.noDataset",
           "group": "navigation@1"
+        },
+        {
+          "command": "dataPilot.renameSavedQuery",
+          "when": "view == dataPilot.savedQueries",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dataPilot.deleteSavedQuery",
+          "when": "view == dataPilot.savedQueries",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dataPilot.cancelHostJob",
+          "when": "view == dataPilot.jobs && viewItem == hostJob.cancellable",
+          "group": "navigation@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dataPilot.deleteAllSavedQueries",
+          "when": "view == dataPilot.savedQueries",
+          "group": "navigation"
         }
       ]
     },

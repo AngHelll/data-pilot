@@ -1,4 +1,5 @@
 export { sampleCsv, iterateCsvRows, DEFAULT_CSV_DIALECT, type SampleResult, type RowRecord } from "./csv.js";
+export { MAX_PAGE_OFFSET, fetchPagePayloadError, pageOffsetError } from "./page-offset.js";
 export { sampleJsonl, iterateJsonlRows } from "./jsonl.js";
 export { DatasetStore, defaultStore, type OpenOptions, type DatasetFormat } from "./session.js";
 export { executeDql, cmpValues } from "./execute.js";

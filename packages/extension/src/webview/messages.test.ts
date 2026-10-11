@@ -2,6 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseWebviewMessage } from "./messages.js";
 
+test("parseWebviewMessage accepts a preview page and a query page", () => {
+  assert.deepEqual(parseWebviewMessage({ type: "changePage", surface: "preview", offset: 200 }), {
+    type: "changePage",
+    surface: "preview",
+    offset: 200,
+  });
+  assert.deepEqual(
+    parseWebviewMessage({ type: "changePage", surface: "query", offset: 500, dql: ' where country = "MX" ' }),
+    { type: "changePage", surface: "query", offset: 500, dql: 'where country = "MX"' },
+  );
+  assert.equal(parseWebviewMessage({ type: "changePage", surface: "query", offset: 1 }), null);
+  assert.equal(parseWebviewMessage({ type: "changePage", surface: "preview", offset: -1 }), null);
+});
+
 test("parseWebviewMessage accepts handshake", () => {
   assert.deepEqual(parseWebviewMessage({ type: "webviewReady" }), { type: "webviewReady" });
 });
@@ -31,7 +45,13 @@ test("parseWebviewMessage accepts query, save, export, and inspect", () => {
     type: "inspectCell",
     rowIndex: 0,
     column: "name",
+    dataCell: false,
   });
+  assert.deepEqual(
+    parseWebviewMessage({ type: "inspectCell", rowIndex: 1, column: "id", dataCell: true }),
+    { type: "inspectCell", rowIndex: 1, column: "id", dataCell: true },
+  );
+  assert.deepEqual(parseWebviewMessage({ type: "inspectorFocus" }), { type: "inspectorFocus" });
 });
 
 test("parseWebviewMessage rejects empty DQL and empty inspect column", () => {

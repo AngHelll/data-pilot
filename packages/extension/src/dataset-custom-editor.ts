@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { isDatasetUri } from "./dataset-uri";
 import { DATA_PILOT_VIEW_TYPE, ensureDatasetViewSession } from "./webview/dataset-panel";
 import type { ExtensionEngineHost } from "./engine-host";
+import type { HostJobLog } from "./host-jobs";
 import type { SavedQueryStore } from "./saved-query-store";
 
 export { DATA_PILOT_VIEW_TYPE } from "./webview/dataset-panel";
@@ -17,6 +18,7 @@ export class DatasetCustomEditorProvider
     private readonly context: vscode.ExtensionContext,
     private readonly engine: ExtensionEngineHost,
     private readonly savedQueries: SavedQueryStore,
+    private readonly jobs: HostJobLog,
   ) {}
 
   openCustomDocument(
@@ -48,6 +50,7 @@ export class DatasetCustomEditorProvider
     const session = ensureDatasetViewSession(webviewPanel, {
       engine: this.engine,
       savedQueryStore: this.savedQueries,
+      jobs: this.jobs,
       extensionUri: this.context.extensionUri,
       title,
     });

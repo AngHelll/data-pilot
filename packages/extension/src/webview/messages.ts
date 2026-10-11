@@ -65,6 +65,8 @@ export type HostToWebviewMessage =
       result: SerializedGrid;
       diagnostics: Diagnostic[];
       elapsedMs?: number;
+      resultTitle?: string;
+      offset?: number;
     }
   | {
       type: "inspectResult";
@@ -74,6 +76,8 @@ export type HostToWebviewMessage =
       raw: string;
       inferredType: string;
     }
+  | { type: "inspectorHosted"; hosted: boolean }
+  | { type: "showEditorTab"; tab: "data" | "result" }
   | { type: "editPreview"; preview: SerializedEditPreview }
   | {
       type: "editApplied";
@@ -83,6 +87,7 @@ export type HostToWebviewMessage =
       preview: SerializedGrid;
     }
   | { type: "queryState"; running: boolean }
+  | { type: "previewPage"; offset: number; preview: SerializedGrid }
   | {
       type: "comparePeers";
       peers: { datasetId: string; label: string; columns: string[] }[];
@@ -102,6 +107,7 @@ export type HostToWebviewMessage =
 /** Webview → host (validated in panel handler). */
 export type WebviewToHostMessage =
   | { type: "runQuery"; dql: string }
+  | { type: "changePage"; surface: "preview" | "query"; offset: number; dql?: string }
   | { type: "planDql"; dql: string; columns?: string[] }
   | { type: "saveQuery"; dql: string }
   | { type: "exportQuery"; dql: string; format?: ExportFormat }
@@ -111,7 +117,8 @@ export type WebviewToHostMessage =
   | { type: "webviewReady" }
   | { type: "cancelQuery" }
   | { type: "openQueryInEditor" }
-  | { type: "inspectCell"; rowIndex: number; column: string }
+  | { type: "inspectCell"; rowIndex: number; column: string; dataCell: boolean }
+  | { type: "inspectorFocus" }
   | { type: "copyText"; text: string }
   | { type: "reportDql"; requestId: string; dql: string }
   | { type: "proposeEdit"; rowIndex: number; column: string; newRaw: string }
@@ -144,6 +151,10 @@ export interface SerializedGrid {
   totalCount?: number;
   scannedBytes?: number;
   scannedRows?: number;
+  /** Preview or Result sentence, including the returned-row range. */
+  footer?: string;
+  cellPill?: boolean[];
+  cellAlignEnd?: boolean[];
 }
 
 const MAX_DQL_LENGTH = 16_384;
@@ -197,6 +208,15 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
   if (typeof msg.type !== "string") return null;
 
   switch (msg.type) {
+    case "changePage": {
+      if (msg.surface !== "preview" && msg.surface !== "query") return null;
+      if (!validIndex(msg.offset)) return null;
+      if (msg.surface === "preview") return { type: "changePage", surface: "preview", offset: msg.offset };
+      if (typeof msg.dql !== "string") return null;
+      const dql = msg.dql.trim();
+      if (!dql || dql.length > MAX_DQL_LENGTH) return null;
+      return { type: "changePage", surface: "query", offset: msg.offset, dql };
+    }
     case "runQuery":
     case "planDql": {
       if (typeof msg.dql !== "string") return null;
@@ -248,8 +268,15 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       return { type: "openQueryInEditor" };
     case "inspectCell": {
       if (!validIndex(msg.rowIndex) || !validColumn(msg.column)) return null;
-      return { type: "inspectCell", rowIndex: msg.rowIndex, column: msg.column };
+      return {
+        type: "inspectCell",
+        rowIndex: msg.rowIndex,
+        column: msg.column,
+        dataCell: msg.dataCell === true,
+      };
     }
+    case "inspectorFocus":
+      return { type: "inspectorFocus" };
     case "copyText": {
       if (typeof msg.text !== "string" || msg.text.length > MAX_CELL_LENGTH) return null;
       return { type: "copyText", text: msg.text };

@@ -31,6 +31,21 @@ button:disabled { opacity: 0.5; cursor: default; }
 .table-wrap { overflow: auto; max-height: 420px; border: 1px solid var(--vscode-panel-border); }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.table-wrap tbody tr { height: 28px; }
+.table-wrap tbody td {
+  box-sizing: border-box;
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 27px;
+}
+.table-wrap tbody tr.row-spacer,
+.table-wrap tbody tr.row-spacer td {
+  height: auto;
+  line-height: 0;
+  padding: 0;
+  border: 0;
+}
 th { position: sticky; top: 0; background: var(--vscode-editor-background); z-index: 1; }
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
 ul.diag { margin: 0; padding-left: 1.2rem; }
@@ -99,11 +114,23 @@ body[data-layout="editor"] #export-query { margin-left: auto; }
   height: 100%;
   cursor: col-resize;
 }
+body[data-layout="editor"] .editor-footer,
+body[data-layout="editor"] #result-footer,
+body[data-layout="editor"] #result-label {
+  white-space: pre-line;
+}
 body[data-layout="editor"] .editor-footer {
   margin-top: 12px;
   padding-top: 8px;
   border-top: 1px solid var(--vscode-panel-border);
   font-size: 0.85rem;
+}
+body[data-layout="editor"] td.cell-end {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+body[data-layout="editor"] td.cell .badge {
+  margin-right: 0;
 }
 body[data-layout="editor"].inspector-collapsed #inspector-body { display: none; }
 body[data-layout="editor"] .editor-title-row {
@@ -307,3 +334,12 @@ body[data-layout="editor"] .toolbar select {
   background: var(--vscode-input-background, transparent);
   border: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border));
 }
+.cell-inspector .inspect-fields {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 6px 10px;
+  margin: 8px 0 12px;
+}
+.cell-inspector .inspect-fields dt { margin: 0; opacity: 0.75; }
+.cell-inspector .inspect-fields dd { margin: 0; word-break: break-word; }
+.cell-inspector .cell-edit { width: 100%; box-sizing: border-box; margin: 4px 0 8px; }

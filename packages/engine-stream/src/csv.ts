@@ -42,6 +42,8 @@ export async function sampleCsv(
   opts: {
     maxRows?: number;
     maxBytes?: number;
+    /** Data rows to pass over before the returned window. 0 keeps the first page. */
+    skipRows?: number;
     dialect?: Partial<CsvDialect>;
     nullTokens?: Set<string>;
     signal?: AbortSignal;
@@ -49,6 +51,7 @@ export async function sampleCsv(
 ): Promise<SampleResult> {
   const maxRows = opts.maxRows ?? 200;
   const maxBytes = opts.maxBytes ?? 1024 * 1024;
+  const skipRows = opts.skipRows ?? 0;
   const dialect = { ...DEFAULT_CSV_DIALECT, ...opts.dialect };
   const nullTokens = opts.nullTokens ?? DEFAULT_NULL_TOKENS;
   const diagnostics: Diagnostic[] = [];
@@ -76,6 +79,8 @@ export async function sampleCsv(
   let buckets = createInferenceBuckets([]);
   let truncated = false;
   let rowIndex = 0;
+  let skipped = 0;
+  let keptBytes = 0;
 
   try {
     for await (const record of parser as AsyncIterable<string[]>) {
@@ -105,7 +110,14 @@ export async function sampleCsv(
         continue;
       }
 
-      if (rows.length >= maxRows || bytesRead >= maxBytes) {
+      if (skipped < skipRows) {
+        skipped += 1;
+        rowIndex += 1;
+        continue;
+      }
+
+      const byteStop = skipRows > 0 ? keptBytes >= maxBytes : bytesRead >= maxBytes;
+      if (rows.length >= maxRows || byteStop) {
         truncated = true;
         break;
       }
@@ -125,6 +137,7 @@ export async function sampleCsv(
         observeRaw(buckets[i]!, raw[i]);
       }
       const lineBytes = Buffer.byteLength(raw.join(dialect.delimiter), "utf8") + 1;
+      keptBytes += lineBytes;
       rows.push({ values, raw, byteLength: lineBytes });
       rowIndex += 1;
     }

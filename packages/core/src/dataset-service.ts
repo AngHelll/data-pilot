@@ -40,6 +40,19 @@ export class DatasetService {
     return this.store.preview(datasetId, budget, requestId, signal);
   }
 
+  /** Next preview window. This op does not accept a query. */
+  async fetchPage(
+    datasetId: string,
+    offset: number,
+    budget?: QueryBudget,
+    requestId?: string,
+    signal?: AbortSignal,
+  ) {
+    const blocked = this.gate("fetchPage");
+    if (blocked) throw blocked;
+    return this.store.preview(datasetId, budget, requestId, signal, offset);
+  }
+
   async inspect(datasetId: string, rowIndex: number, column: string) {
     const blocked = this.gate("inspectValue");
     if (blocked) throw blocked;

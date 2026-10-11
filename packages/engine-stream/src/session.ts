@@ -13,6 +13,7 @@ import {
 } from "@data-pilot/contracts";
 import { sampleCsv, iterateCsvRows } from "./csv.js";
 import { sampleJsonl, iterateJsonlRows } from "./jsonl.js";
+import { pageOffsetError } from "./page-offset.js";
 import { classifySample } from "./cell.js";
 import {
   applyCellEdit,
@@ -156,9 +157,24 @@ export class DatasetStore {
     budget: QueryBudget = {},
     requestId = "preview",
     signal?: AbortSignal,
+    skipRows = 0,
   ): Promise<QueryResult> {
-    const stale = await this.assertFresh(datasetId);
     const s = this.get(datasetId);
+    const offsetError = pageOffsetError(skipRows);
+    if (offsetError) {
+      return {
+        requestId,
+        datasetId,
+        revisionId: s.handle.revision.revisionId,
+        columns: s.header,
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "unknown",
+        diagnostics: [{ code: "page-offset", severity: "error", message: offsetError }],
+      };
+    }
+    const stale = await this.assertFresh(datasetId);
     if (stale) {
       return {
         requestId,
@@ -178,6 +194,7 @@ export class DatasetStore {
     const sampleOpts = {
       maxRows,
       maxBytes,
+      ...(skipRows > 0 ? { skipRows } : {}),
       ...(signal ? { signal } : {}),
     };
     const sample =
@@ -189,22 +206,27 @@ export class DatasetStore {
       r.values.map((v, i) => promotePreviewValue(v, r.raw[i] ?? "", s.handle.columns[i]?.inferredType)),
     );
 
+    const completion = signal?.aborted
+      ? "cancelled"
+      : sample.truncated
+        ? "truncated"
+        : "complete";
     return this.seal(datasetId, {
       requestId,
       datasetId,
       revisionId: s.handle.revision.revisionId,
       columns: sample.header,
       rows,
+      ...(rows.length > 0
+        ? { sourceRowIndexes: rows.map((_, index) => skipRows + index) }
+        : {}),
       rowCountReturned: rows.length,
-      completion: signal?.aborted
-        ? "cancelled"
-        : sample.truncated
-          ? "truncated"
-          : "complete",
+      ...(completion === "complete" ? { totalCount: skipRows + rows.length } : {}),
+      completion,
       scope: sample.truncated ? "prefix" : "full",
       diagnostics: [...s.diagnostics, ...sample.diagnostics],
       scannedBytes: sample.bytesRead,
-      scannedRows: rows.length,
+      scannedRows: skipRows + rows.length,
     });
   }
 

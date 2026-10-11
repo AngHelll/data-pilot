@@ -1,9 +1,14 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { ColumnMeta, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
+import type { ColumnMeta, DataValue, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
 import { dropToolbarChip, parseDql, ParseError, readToolbarChips } from "@data-pilot/dql";
 import { datasetColorToken } from "../dataset-color";
+import { activityOutcome, activityText, columnPresentation, gridFooter, resultTabLabel } from "../editor-chrome";
+import { queryStagesPage } from "../row-window";
+import { noteEditorActivity } from "../editor-activity";
+import type { HostJobLog } from "../host-jobs";
+import { emitInspector, inspectorIsHosted, type InspectorCell } from "../inspector-hub";
 import { filterToDql } from "../filter-dql";
 import { formatCell, formatCells } from "../format-cell";
 import {
@@ -14,7 +19,7 @@ import {
 import type { ExtensionEngineHost } from "../engine-host";
 import { writeExportArtifact } from "../export-writer";
 import { SavedQueryStore } from "../saved-query-store";
-import { rememberDatasetPath } from "../saved-query-tree";
+import { rememberDatasetPath, savedQueryDisplayName, savedQueryNeedsName } from "../saved-query-tree";
 import {
   mergeIngestDiagnostics,
   planLooksRunnable,
@@ -29,6 +34,7 @@ export const DATA_PILOT_VIEW_TYPE = "dataPilot.dataset";
 export interface MountDatasetViewOptions {
   engine: ExtensionEngineHost;
   savedQueryStore: SavedQueryStore;
+  jobs: HostJobLog;
   extensionUri: vscode.Uri;
   title: string;
 }
@@ -37,7 +43,10 @@ function serializeGrid(
   mode: "preview" | "query",
   result: QueryResult,
   columnTypes?: SerializedGrid["columnTypes"],
+  elapsedMs?: number,
+  remembered?: ReadonlyMap<string, { pill: boolean; alignEnd: boolean }>,
 ): SerializedGrid {
+  const styles = gridStyles(result.columns, columnTypes, result.rows, remembered);
   return {
     mode,
     columns: result.columns,
@@ -52,7 +61,52 @@ function serializeGrid(
     ...(result.totalCount !== undefined ? { totalCount: result.totalCount } : {}),
     ...(result.scannedBytes !== undefined ? { scannedBytes: result.scannedBytes } : {}),
     ...(result.scannedRows !== undefined ? { scannedRows: result.scannedRows } : {}),
+    footer: gridFooter({
+      surface: mode === "preview" ? "Preview" : "Result",
+      rowCountReturned: result.rowCountReturned,
+      completion: result.completion,
+      ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+    }),
+    cellPill: styles.map((style) => style.pill),
+    cellAlignEnd: styles.map((style) => style.alignEnd),
   };
+}
+
+function gridStyles(
+  columns: readonly string[],
+  types: readonly ColumnMeta[] | undefined,
+  rows: readonly DataValue[][],
+  remembered?: ReadonlyMap<string, { pill: boolean; alignEnd: boolean }>,
+): { pill: boolean; alignEnd: boolean }[] {
+  return columns.map((name, index) => {
+    const known = remembered?.get(name);
+    if (known) return known;
+    const meta = types?.find((column) => column.name === name) ?? types?.[index];
+    const seen = rows.flatMap((row) => {
+      const cell = row[index];
+      return cell?.kind === "string" ? [cell.value] : [];
+    });
+    const style = columnPresentation({
+      inferredType: meta?.inferredType ?? "",
+      ...(meta?.distinctCountSample !== undefined
+        ? { distinctCountSample: meta.distinctCountSample }
+        : {}),
+      seenValues: seen,
+    });
+    return { pill: style.pill, alignEnd: style.align === "end" };
+  });
+}
+
+function rememberStyles(
+  columns: readonly ColumnMeta[],
+  rows: readonly DataValue[][],
+): Map<string, { pill: boolean; alignEnd: boolean }> {
+  const styles = gridStyles(
+    columns.map((column) => column.name),
+    columns,
+    rows,
+  );
+  return new Map(columns.map((column, index) => [column.name, styles[index]!]));
 }
 
 function escapeHtml(text: string): string {
@@ -189,7 +243,7 @@ function editorPanelHtml(
       <button id="clear-result" class="quiet" type="button">Clear result</button>
       <button id="export-query" class="quiet" type="button" hidden>Export result</button>
     </div>
-    <div class="table-wrap editor-table"><table id="result-grid"><thead></thead><tbody></tbody></table></div>
+    <div class="table-wrap editor-table"><table id="result-grid" tabindex="0"><thead></thead><tbody></tbody></table></div>
     <p class="hint" id="result-footer"></p>
   </section>
     </div>
@@ -233,6 +287,10 @@ function editorPanelHtml(
     </div>
   </div>
   <p id="editor-footer" class="editor-footer"></p>
+  <div class="row-actions" id="page-actions">
+    <button id="page-prev" type="button" hidden>Previous page</button>
+    <button id="page-next" type="button" hidden>Next page</button>
+  </div>
   </div>
   <section id="inspector" hidden>
     <div class="row-actions">
@@ -354,13 +412,18 @@ export function ensureDatasetViewSession(
 const panelSubscriptions = new WeakMap<vscode.WebviewPanel, vscode.Disposable>();
 
 const editorSessions = new Set<DatasetViewSession>();
-const pendingExternalResult = new Map<string, { result: QueryResult; elapsedMs?: number }>();
+const pendingReveal = new Map<string, "data" | "result">();
+const pendingExternalResult = new Map<
+  string,
+  { result: QueryResult; elapsedMs?: number; dql?: string }
+>();
 
 class DatasetViewSession {
   private readonly nonce: string;
   private currentFilePath: string | undefined;
   private datasetId: string | undefined;
   private columns: ColumnMeta[] = [];
+  private previewStyles = new Map<string, { pill: boolean; alignEnd: boolean }>();
   private editorActive = false;
   private dqlRequestSeq = 0;
   private readonly dqlWaiters = new Map<
@@ -374,6 +437,8 @@ class DatasetViewSession {
   private undeliveredTimer: ReturnType<typeof setTimeout> | undefined;
   private loadGeneration = 0;
   private loadInFlight = false;
+  private inspectSeq = 0;
+  private dataCell: InspectorCell | undefined;
   private lastSessionPayload:
     | Extract<HostToWebviewMessage, { type: "session" }>
     | undefined;
@@ -404,6 +469,7 @@ class DatasetViewSession {
     this.peersSub = options.engine.onSessionsChanged(() => {
       this.postComparePeers();
     });
+    if (inspectorIsHosted()) this.post({ type: "inspectorHosted", hosted: true });
   }
 
   datasetPath(): string | undefined {
@@ -420,8 +486,58 @@ class DatasetViewSession {
 
   setEditorActive(active: boolean): void {
     this.editorActive = active;
-    if (active) activeEditorSession = this;
-    else if (activeEditorSession === this) activeEditorSession = undefined;
+    if (active) {
+      activeEditorSession = this;
+      this.publishInspector();
+    } else if (activeEditorSession === this) {
+      activeEditorSession = undefined;
+      emitInspector({ type: "empty" });
+    }
+  }
+
+  showTab(tab: "data" | "result"): void {
+    this.post({ type: "showEditorTab", tab });
+  }
+
+  noteInspectorHosted(hosted: boolean): void {
+    this.post({ type: "inspectorHosted", hosted });
+  }
+
+  async copyText(text: string): Promise<void> {
+    await vscode.env.clipboard.writeText(text);
+  }
+
+  async proposeCellEdit(rowIndex: number, column: string, newRaw: string): Promise<void> {
+    try {
+      const preview = await this.engine.proposeEdit(this.requireDatasetId(), rowIndex, column, newRaw);
+      this.post({ type: "editPreview", preview });
+      emitInspector({ type: "diff", diff: preview.unifiedDiff });
+    } catch (err) {
+      this.reportError(err);
+      emitInspector({ type: "notice", message: errorMessage(err) });
+    }
+  }
+
+  async applyCellEdit(rowIndex: number, column: string, newRaw: string): Promise<void> {
+    this.holdOwnWrite();
+    try {
+      const applied = await this.engine.applyEdit(this.requireDatasetId(), rowIndex, column, newRaw);
+      if (!applied.written) {
+        this.post({ type: "editPreview", preview: applied.editPreview });
+        emitInspector({ type: "diff", diff: applied.editPreview.unifiedDiff });
+        return;
+      }
+      void vscode.window.showInformationMessage(
+        `Saved ${applied.editPreview.column} @ row ${applied.editPreview.rowIndex}`,
+      );
+      this.dataCell = undefined;
+      this.publishInspector();
+      this.holdOwnWrite();
+      await this.loadDataset(applied.path);
+    } catch (err) {
+      this.reportError(err);
+      emitInspector({ type: "notice", message: errorMessage(err) });
+    }
   }
 
   requestDqlText(): Promise<string> {
@@ -465,6 +581,33 @@ class DatasetViewSession {
 
   private get savedQueryStore(): SavedQueryStore {
     return this.options.savedQueryStore;
+  }
+
+  private requireDatasetId(): string {
+    if (!this.datasetId) {
+      throw {
+        code: "no-dataset",
+        severity: "error",
+        message: "Open a dataset first",
+      } satisfies Diagnostic;
+    }
+    return this.datasetId;
+  }
+
+  private reportError(err: unknown): void {
+    this.post({ type: "error", message: errorMessage(err) });
+  }
+
+  publishInspector(): void {
+    if (!this.editorActive) return;
+    if (!this.dataCell) {
+      emitInspector({ type: "empty" });
+      return;
+    }
+    emitInspector({
+      type: "cell",
+      cell: { ...this.dataCell, canEdit: this.engine.canEdit() },
+    });
   }
 
   private postComparePeers(): void {
@@ -584,6 +727,7 @@ class DatasetViewSession {
     if (this.lastSessionPayload) {
       void this.deliverToWebview(this.lastSessionPayload);
     }
+    void this.deliverToWebview({ type: "inspectorHosted", hosted: inspectorIsHosted() });
   }
 
   private markWebviewReady(): void {
@@ -651,13 +795,33 @@ class DatasetViewSession {
     const generation = ++this.loadGeneration;
     this.loadInFlight = true;
     logInfo(`Open dataset requested: ${filePath} (gen=${generation})`);
+    const job = this.options.jobs.begin({
+      kind: "preview",
+      filePath,
+      fileName: path.basename(filePath),
+    });
+    const started = Date.now();
     try {
       const session = await this.engine.openDataset(filePath);
+      const elapsedMs = Date.now() - started;
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("preview", session.preview.completion, false),
+        elapsedMs,
+      });
       if (token?.isCancellationRequested || generation !== this.loadGeneration) {
         return false;
       }
       this.datasetId = session.handle.datasetId;
       this.columns = session.handle.columns;
+      this.previewStyles = rememberStyles(session.handle.columns, session.preview.rows);
+      noteEditorActivity(
+        filePath,
+        activityText(
+          "preview",
+          activityOutcome("preview", session.preview.completion, false),
+          elapsedMs,
+        ),
+      );
       this.watchSourceFile(filePath);
       this.surface.setTitle(filePath.split(/[/\\]/).pop() ?? "Data Pilot");
       logInfo(`Posting dataset session (gen=${generation})`);
@@ -670,13 +834,24 @@ class DatasetViewSession {
           session.diagnostics,
           session.preview.diagnostics,
         ),
-        preview: serializeGrid("preview", session.preview, session.handle.columns),
+        preview: serializeGrid(
+          "preview",
+          session.preview,
+          session.handle.columns,
+          elapsedMs,
+          this.previewStyles,
+        ),
         datasetColor: datasetColorToken(filePath),
       });
       this.consumePendingResult(filePath);
       this.postRevert();
+      this.consumePendingReveal(filePath);
       return true;
     } catch (err) {
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("preview", undefined, true),
+        elapsedMs: Date.now() - started,
+      });
       const message =
         typeof err === "object" && err !== null && "message" in err
           ? String((err as { message: unknown }).message)
@@ -686,6 +861,7 @@ class DatasetViewSession {
       void vscode.window.showErrorMessage(`Data Pilot: ${message}`);
       if (generation === this.loadGeneration) {
         pendingExternalResult.delete(path.resolve(filePath));
+        pendingReveal.delete(path.resolve(filePath));
       }
       return false;
     } finally {
@@ -693,17 +869,148 @@ class DatasetViewSession {
     }
   }
 
+  private async loadPreviewPage(offset: number): Promise<void> {
+    if (!this.datasetId || !this.currentFilePath) {
+      this.reportError({ message: "Open a dataset first" });
+      return;
+    }
+    const filePath = this.currentFilePath;
+    const generation = this.loadGeneration;
+    const job = this.options.jobs.begin({
+      kind: "preview",
+      filePath,
+      fileName: path.basename(filePath),
+    });
+    const started = Date.now();
+    try {
+      const result = await this.engine.fetchPage(this.datasetId, offset);
+      const elapsedMs = Date.now() - started;
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("preview", result.completion, result.completion === "error"),
+        elapsedMs,
+      });
+      if (generation !== this.loadGeneration) return;
+      this.previewStyles = rememberStyles(this.columns, result.rows);
+      this.post({
+        type: "previewPage",
+        offset,
+        preview: serializeGrid("preview", result, this.columns, elapsedMs, this.previewStyles),
+      });
+      noteEditorActivity(
+        filePath,
+        activityText(
+          "preview",
+          activityOutcome("preview", result.completion, result.completion === "error"),
+          elapsedMs,
+        ),
+      );
+    } catch (err) {
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("preview", undefined, true),
+        elapsedMs: Date.now() - started,
+      });
+      if (generation === this.loadGeneration) this.reportError(err);
+    }
+  }
+
+  private async loadQueryPage(dql: string, offset: number): Promise<void> {
+    const blocked = assertOpAllowed(
+      { trustMode: vscode.workspace.isTrusted ? "trusted" : "untrusted-limited" },
+      "executeQuery",
+    );
+    if (blocked) {
+      this.reportError(blocked);
+      return;
+    }
+    let stages: string[] = [];
+    try {
+      stages = parseDql(dql).stages.map((stage) => stage.kind);
+    } catch (err) {
+      this.reportError(err);
+      return;
+    }
+    if (!queryStagesPage(stages)) {
+      this.reportError({ message: "This query does not have another page" });
+      return;
+    }
+    const filePath = this.currentFilePath;
+    if (!filePath || !this.datasetId) {
+      this.reportError({ message: "Open a dataset first" });
+      return;
+    }
+    const generation = this.loadGeneration;
+    const queryName = savedQueryDisplayName(this.savedQueryStore.list(), dql, path.resolve(filePath));
+    const job = this.options.jobs.begin({
+      kind: "query",
+      filePath,
+      fileName: path.basename(filePath),
+      dql,
+      ...(queryName ? { name: queryName } : {}),
+    });
+    this.post({ type: "queryState", running: true });
+    const started = Date.now();
+    try {
+      const result = await this.engine.executeQuery(this.datasetId, dql, offset);
+      const elapsedMs = Date.now() - started;
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("query", result.completion, result.completion === "error"),
+        elapsedMs,
+        cancelled: result.completion === "cancelled",
+      });
+      if (generation !== this.loadGeneration) return;
+      noteEditorActivity(
+        filePath,
+        activityText("query", activityOutcome("query", result.completion, result.completion === "error"), elapsedMs),
+      );
+      this.post({
+        type: "queryResult",
+        result: serializeGrid("query", result, this.columns, elapsedMs, this.previewStyles),
+        diagnostics: result.diagnostics,
+        elapsedMs,
+        resultTitle: this.resultTitleFor(dql),
+        offset,
+      });
+    } catch (err) {
+      this.options.jobs.finish(job.id, {
+        outcome: activityOutcome("query", undefined, true),
+        elapsedMs: Date.now() - started,
+      });
+      if (generation === this.loadGeneration) this.reportError(err);
+    } finally {
+      if (generation === this.loadGeneration) this.post({ type: "queryState", running: false });
+    }
+  }
+
   isReadyForExternalResult(): boolean {
     return this.currentFilePath !== undefined && !this.loadInFlight;
   }
 
-  paintExternalResult(result: QueryResult, elapsedMs?: number): void {
+  paintExternalResult(result: QueryResult, elapsedMs?: number, dql?: string): void {
     this.post({
       type: "queryResult",
-      result: serializeGrid("query", result, this.columns),
+      result: serializeGrid("query", result, this.columns, elapsedMs, this.previewStyles),
       diagnostics: result.diagnostics,
       ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+      resultTitle: this.resultTitleFor(dql),
     });
+  }
+
+  private resultTitleFor(dql: string | undefined): string {
+    const file = this.currentFilePath ? path.resolve(this.currentFilePath) : undefined;
+    const saved = dql
+      ? this.savedQueryStore
+          .list()
+          .find((row) => row.dql === dql && row.datasetPath === file)
+      : undefined;
+    return resultTabLabel(saved?.name, dql);
+  }
+
+  private consumePendingReveal(filePath: string): void {
+    const key = path.resolve(filePath);
+    const tab = pendingReveal.get(key);
+    if (!tab) return;
+    pendingReveal.delete(key);
+    this.showTab(tab);
   }
 
   private consumePendingResult(filePath: string): void {
@@ -711,7 +1018,7 @@ class DatasetViewSession {
     const pending = pendingExternalResult.get(key);
     if (!pending) return;
     pendingExternalResult.delete(key);
-    this.paintExternalResult(pending.result, pending.elapsedMs);
+    this.paintExternalResult(pending.result, pending.elapsedMs, pending.dql);
   }
 
   private async onWebviewMessage(raw: unknown): Promise<void> {
@@ -752,11 +1059,7 @@ class DatasetViewSession {
     };
 
     const showErr = (err: unknown): void => {
-      const message =
-        typeof err === "object" && err !== null && "message" in err
-          ? String((err as { message: unknown }).message)
-          : String(err);
-      this.post({ type: "error", message });
+      this.reportError(err);
     };
 
     if (msg.type === "reopenDataset") {
@@ -783,21 +1086,34 @@ class DatasetViewSession {
     }
 
     if (msg.type === "cancelQuery") {
+      this.options.jobs.cancelActive();
       await this.engine.cancelActiveQuery();
       this.post({ type: "queryState", running: false });
       return;
     }
 
     if (msg.type === "copyText") {
-      await vscode.env.clipboard.writeText(msg.text);
+      await this.copyText(msg.text);
+      return;
+    }
+
+    if (msg.type === "inspectorFocus") {
+      this.inspectSeq += 1;
+      this.dataCell = undefined;
+      this.publishInspector();
       return;
     }
 
     if (msg.type === "inspectCell") {
       const generation = this.loadGeneration;
+      const seq = ++this.inspectSeq;
+      if (!msg.dataCell) {
+        this.dataCell = undefined;
+        this.publishInspector();
+      }
       try {
         const detail = await this.engine.inspectCell(boundDatasetId(), msg.rowIndex, msg.column);
-        if (generation !== this.loadGeneration) return;
+        if (generation !== this.loadGeneration || seq !== this.inspectSeq) return;
         this.post({
           type: "inspectResult",
           rowIndex: msg.rowIndex,
@@ -806,6 +1122,18 @@ class DatasetViewSession {
           raw: detail.raw,
           inferredType: detail.inferredType,
         });
+        if (msg.dataCell && this.currentFilePath) {
+          this.dataCell = {
+            filePath: this.currentFilePath,
+            fileName: path.basename(this.currentFilePath),
+            rowIndex: msg.rowIndex,
+            column: msg.column,
+            inferredType: detail.inferredType,
+            raw: detail.raw,
+            canEdit: this.engine.canEdit(),
+          };
+          this.publishInspector();
+        }
       } catch (err) {
         showErr(err);
       }
@@ -813,41 +1141,12 @@ class DatasetViewSession {
     }
 
     if (msg.type === "proposeEdit") {
-      try {
-        const preview = await this.engine.proposeEdit(
-          boundDatasetId(),
-          msg.rowIndex,
-          msg.column,
-          msg.newRaw,
-        );
-        this.post({ type: "editPreview", preview });
-      } catch (err) {
-        showErr(err);
-      }
+      await this.proposeCellEdit(msg.rowIndex, msg.column, msg.newRaw);
       return;
     }
 
     if (msg.type === "applyEdit") {
-      this.holdOwnWrite();
-      try {
-        const applied = await this.engine.applyEdit(
-          boundDatasetId(),
-          msg.rowIndex,
-          msg.column,
-          msg.newRaw,
-        );
-        if (!applied.written) {
-          this.post({ type: "editPreview", preview: applied.editPreview });
-          return;
-        }
-        void vscode.window.showInformationMessage(
-          `Saved ${applied.editPreview.column} @ row ${applied.editPreview.rowIndex}`,
-        );
-        this.holdOwnWrite();
-        await this.loadDataset(applied.path);
-      } catch (err) {
-        showErr(err);
-      }
+      await this.applyCellEdit(msg.rowIndex, msg.column, msg.newRaw);
       return;
     }
 
@@ -877,7 +1176,17 @@ class DatasetViewSession {
         const datasetPath = this.engine
           .listOpenSessions()
           .find((session) => session.datasetId === datasetId)?.filePath;
-        const queries = this.savedQueryStore.append(rememberDatasetPath(saved, datasetPath));
+        const withPath = rememberDatasetPath(saved, datasetPath);
+        let named = withPath;
+        if (savedQueryNeedsName(this.savedQueryStore.list(), withPath)) {
+          const picked = await vscode.window.showInputBox({
+            title: "Name this query",
+            prompt: "Leave empty to keep the query text as the label.",
+          });
+          const trimmed = picked?.trim();
+          if (trimmed) named = { ...withPath, name: trimmed };
+        }
+        const queries = this.savedQueryStore.append(named);
         this.post({ type: "savedQueries", queries });
         void vscode.window.showInformationMessage("Query saved to workspace state");
       } catch (err) {
@@ -1021,6 +1330,12 @@ class DatasetViewSession {
       return;
     }
 
+    if (msg.type === "changePage") {
+      if (msg.surface === "preview") await this.loadPreviewPage(msg.offset);
+      else if (msg.dql) await this.loadQueryPage(msg.dql, msg.offset);
+      return;
+    }
+
     if (msg.type === "runQuery") {
       const generation = this.loadGeneration;
       try {
@@ -1039,24 +1354,67 @@ class DatasetViewSession {
         return;
       }
 
+      const filePath = this.currentFilePath;
+      const queryName = filePath
+        ? savedQueryDisplayName(this.savedQueryStore.list(), msg.dql, path.resolve(filePath))
+        : undefined;
+      const job = filePath
+        ? this.options.jobs.begin({
+            kind: "query",
+            filePath,
+            fileName: path.basename(filePath),
+            dql: msg.dql,
+            ...(queryName ? { name: queryName } : {}),
+          })
+        : undefined;
       this.post({ type: "queryState", running: true });
       const started = Date.now();
       try {
         const result = await this.engine.executeQuery(boundDatasetId(), msg.dql);
+        const elapsedMs = Date.now() - started;
+        if (job) {
+          this.options.jobs.finish(job.id, {
+            outcome: activityOutcome("query", result.completion, false),
+            elapsedMs,
+            cancelled: result.completion === "cancelled",
+          });
+        }
         if (generation !== this.loadGeneration) return;
+        if (filePath) {
+          noteEditorActivity(
+            filePath,
+            activityText("query", activityOutcome("query", result.completion, false), elapsedMs),
+          );
+        }
         this.post({
           type: "queryResult",
-          result: serializeGrid("query", result),
+          result: serializeGrid("query", result, this.columns, elapsedMs, this.previewStyles),
           diagnostics: result.diagnostics,
-          elapsedMs: Date.now() - started,
+          elapsedMs,
+          resultTitle: this.resultTitleFor(msg.dql),
         });
       } catch (err) {
+        if (job) {
+          this.options.jobs.finish(job.id, {
+            outcome: activityOutcome("query", undefined, true),
+            elapsedMs: Date.now() - started,
+          });
+        }
+        if (filePath) {
+          noteEditorActivity(filePath, activityText("query", "failed", Date.now() - started));
+        }
         showErr(err);
       } finally {
         this.post({ type: "queryState", running: false });
       }
     }
   }
+}
+
+function errorMessage(err: unknown): string {
+  return typeof err === "object" && err !== null && "message" in err
+    ? String((err as { message: unknown }).message)
+    : String(err);
 }
 
 function editorFor(filePath: string): DatasetViewSession | undefined {
@@ -1066,6 +1424,53 @@ function editorFor(filePath: string): DatasetViewSession | undefined {
     if (current && path.resolve(current) === key) return session;
   }
   return undefined;
+}
+
+/** Ask an open editor to show Data or Result. Result stays put when that result is gone. */
+export function revealDatasetTab(filePath: string, tab: "data" | "result"): void {
+  const key = path.resolve(filePath);
+  const session = editorFor(filePath);
+  if (session) {
+    pendingReveal.delete(key);
+    session.showTab(tab);
+    return;
+  }
+  pendingReveal.set(key, tab);
+}
+
+export function republishActiveInspector(): void {
+  if (activeEditorSession?.isEditorActive()) {
+    activeEditorSession.publishInspector();
+    return;
+  }
+  emitInspector({ type: "empty" });
+}
+
+export function broadcastInspectorHosted(hosted: boolean): void {
+  for (const session of editorSessions) session.noteInspectorHosted(hosted);
+}
+
+export async function copyActiveCell(filePath: string, text: string): Promise<void> {
+  const session = activeEditorSession;
+  if (!session?.isEditorActive() || !sameFile(session.datasetPath(), filePath)) return;
+  await session.copyText(text);
+}
+
+export async function editActiveCell(
+  action: "propose" | "apply",
+  filePath: string,
+  rowIndex: number,
+  column: string,
+  newRaw: string,
+): Promise<void> {
+  const session = activeEditorSession;
+  if (!session?.isEditorActive() || !sameFile(session.datasetPath(), filePath)) return;
+  if (action === "propose") await session.proposeCellEdit(rowIndex, column, newRaw);
+  else await session.applyCellEdit(rowIndex, column, newRaw);
+}
+
+function sameFile(current: string | undefined, filePath: string): boolean {
+  return current !== undefined && path.resolve(current) === path.resolve(filePath);
 }
 
 /** Resolved paths of dataset editors that already have a file open. */
@@ -1083,10 +1488,11 @@ export function paintOpenEditorResult(
   filePath: string,
   result: QueryResult,
   elapsedMs?: number,
+  dql?: string,
 ): boolean {
   const session = editorFor(filePath);
   if (!session?.isReadyForExternalResult()) return false;
-  session.paintExternalResult(result, elapsedMs);
+  session.paintExternalResult(result, elapsedMs, dql);
   return true;
 }
 
@@ -1095,14 +1501,19 @@ export async function openEditorForResult(
   filePath: string,
   result: QueryResult,
   elapsedMs?: number,
+  dql?: string,
 ): Promise<void> {
   const key = path.resolve(filePath);
   const existing = editorFor(filePath);
   if (existing?.isReadyForExternalResult()) {
-    existing.paintExternalResult(result, elapsedMs);
+    existing.paintExternalResult(result, elapsedMs, dql);
     return;
   }
-  const pending = { result, ...(elapsedMs !== undefined ? { elapsedMs } : {}) };
+  const pending = {
+    result,
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+    ...(dql !== undefined ? { dql } : {}),
+  };
   pendingExternalResult.set(key, pending);
   try {
     await vscode.commands.executeCommand(
@@ -1117,7 +1528,7 @@ export async function openEditorForResult(
   const session = editorFor(filePath);
   if (session?.isReadyForExternalResult() && pendingExternalResult.get(key) === pending) {
     pendingExternalResult.delete(key);
-    session.paintExternalResult(result, elapsedMs);
+    session.paintExternalResult(result, elapsedMs, dql);
   }
 }
 

@@ -1,6 +1,12 @@
 import type { SavedQuery } from "@data-pilot/contracts";
 import * as vscode from "vscode";
-import { associateSavedQuery, nextSavedQueries } from "./saved-query-tree";
+import {
+  associateSavedQuery,
+  nextSavedQueries,
+  renameSavedQuery,
+  withoutAllSavedQueries,
+  withoutSavedQuery,
+} from "./saved-query-tree";
 
 const STORAGE_KEY = "dataPilot.savedQueries.v1";
 
@@ -25,6 +31,18 @@ export class SavedQueryStore {
 
   associate(query: SavedQuery, datasetPath: string): SavedQuery[] {
     return this.write(associateSavedQuery(this.list(), query, datasetPath));
+  }
+
+  remove(query: SavedQuery): SavedQuery[] {
+    return this.write(withoutSavedQuery(this.list(), query));
+  }
+
+  rename(query: SavedQuery, name: string): SavedQuery[] {
+    return this.write(renameSavedQuery(this.list(), query, name));
+  }
+
+  clear(): SavedQuery[] {
+    return this.write(withoutAllSavedQueries());
   }
 
   private write(next: SavedQuery[]): SavedQuery[] {

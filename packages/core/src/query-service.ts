@@ -7,7 +7,7 @@ import {
   type TrustMode,
 } from "@data-pilot/contracts";
 import { analyzeDql, formatDql, type DqlQuery } from "@data-pilot/dql";
-import { executeDql, type DatasetStore } from "@data-pilot/engine-stream";
+import { executeDql, pageOffsetError, type DatasetStore } from "@data-pilot/engine-stream";
 import { normalizeParams } from "./params.js";
 import { assertOpAllowed, type SessionContext } from "./trust.js";
 
@@ -53,6 +53,7 @@ export class QueryService {
     budget: QueryBudget = {},
     requestId = "query",
     signal?: AbortSignal,
+    offset = 0,
   ): Promise<QueryResult> {
     const blocked = assertOpAllowed(this.ctx(), "executeQuery");
     if (blocked) {
@@ -67,6 +68,21 @@ export class QueryService {
         completion: "error",
         scope: "unknown",
         diagnostics: [blocked],
+      };
+    }
+    const offsetError = pageOffsetError(offset);
+    if (offsetError) {
+      const { handle } = this.store.describe(datasetId);
+      return {
+        requestId,
+        datasetId,
+        revisionId: handle.revision.revisionId,
+        columns: handle.columns.map((column) => column.name),
+        rows: [],
+        rowCountReturned: 0,
+        completion: "error",
+        scope: "unknown",
+        diagnostics: [{ code: "page-offset", severity: "error", message: offsetError }],
       };
     }
 
@@ -96,6 +112,7 @@ export class QueryService {
       budget,
       requestId,
       signal,
+      offset,
     );
   }
 

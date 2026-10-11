@@ -66,17 +66,22 @@ export async function sampleJsonl(
   opts: {
     maxRows?: number;
     maxBytes?: number;
+    /** Data rows to pass over before the returned window. 0 keeps the first page. */
+    skipRows?: number;
     signal?: AbortSignal;
   } = {},
 ): Promise<SampleResult> {
   const maxRows = opts.maxRows ?? 200;
   const maxBytes = opts.maxBytes ?? 1024 * 1024;
+  const skipRows = opts.skipRows ?? 0;
   const diagnostics: Diagnostic[] = [];
   const stream = fs.createReadStream(filePath, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
   let bytesRead = 0;
   let truncated = false;
+  let skipped = 0;
+  let keptBytes = 0;
   const columnOrder: string[] = [];
   const columnSet = new Set<string>();
   const pending: Array<{
@@ -119,12 +124,18 @@ export async function sampleJsonl(
           columnOrder.push(k);
         }
       }
+      if (skipped < skipRows) {
+        skipped += 1;
+        continue;
+      }
       pending.push({
         obj: rec,
         tokens: extractNumberTokens(trimmed),
         bytes: lineBytes,
       });
-      if (pending.length >= maxRows || bytesRead >= maxBytes) {
+      keptBytes += lineBytes;
+      const overBytes = skipRows > 0 ? keptBytes >= maxBytes : bytesRead >= maxBytes;
+      if (pending.length >= maxRows || overBytes) {
         truncated = true;
         break;
       }

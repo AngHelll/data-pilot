@@ -15,15 +15,21 @@
     let inspectRaw = "";
     let lastGrid = null;
     let lastResult = null;
-    let resultElapsedMs = null;
+    let resultTitle = "";
     let comparisons = [];
     let appliedSearch = "";
     let editorTab = "data";
     let hasResult = false;
+    let inspectorHosted = false;
     let queryOk = false;
     let queryRunning = false;
     const hiddenColumns = new Set();
     const columnWidths = new Map();
+    const ROW_HEIGHT_PX = 28;
+    const ROW_OVERSCAN = 8;
+    let previewStack = [0];
+    let resultStack = [0];
+    let pageBusy = false;
 
     const els = {
       loading: document.getElementById("loading"),
@@ -82,6 +88,164 @@
 
     function text(el, value) {
       el.textContent = value ?? "";
+    }
+
+    /** Same window as packages/extension/src/row-window.ts. This file cannot import it. */
+    function visibleRowWindow(rowCount, scrollTop, viewportHeight) {
+      const count = Number.isFinite(rowCount) ? Math.max(0, Math.floor(rowCount)) : 0;
+      if (count === 0) return { start: 0, end: 0, topPx: 0, bottomPx: 0 };
+      const scroll = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0;
+      const view = Number.isFinite(viewportHeight) ? Math.max(ROW_HEIGHT_PX, viewportHeight) : ROW_HEIGHT_PX;
+      const first = Math.floor(scroll / ROW_HEIGHT_PX);
+      const visible = Math.max(1, Math.ceil(view / ROW_HEIGHT_PX));
+      const start = Math.max(0, first - ROW_OVERSCAN);
+      const end = Math.min(count, first + visible + ROW_OVERSCAN);
+      return {
+        start,
+        end,
+        topPx: start * ROW_HEIGHT_PX,
+        bottomPx: Math.max(0, count - end) * ROW_HEIGHT_PX,
+      };
+    }
+
+    function rememberPageOffset(stack, offset) {
+      if (!Number.isInteger(offset) || offset < 0) return stack.slice();
+      if (stack.length === 0) return [offset];
+      const current = stack[stack.length - 1];
+      if (offset === current) return stack.slice();
+      if (stack.length > 1 && offset === stack[stack.length - 2]) return stack.slice(0, -1);
+      return stack.concat(offset);
+    }
+
+    function queryTextPages(dql) {
+      return !/\b(take|count|expect|when)\b/i.test(dql || "");
+    }
+
+    function fileRowIndex(grid, ri) {
+      const list = grid && grid.sourceRowIndexes;
+      if (list && Number.isInteger(list[ri])) return list[ri];
+      return null;
+    }
+
+    function spacerRow(px, colCount) {
+      const tr = document.createElement("tr");
+      tr.className = "row-spacer";
+      tr.style.height = px + "px";
+      const td = document.createElement("td");
+      td.colSpan = colCount;
+      tr.appendChild(td);
+      return tr;
+    }
+
+    function paintVirtualRows(gridEl, grid, names) {
+      const tbody = gridEl.querySelector("tbody");
+      if (!tbody || !grid) return;
+      const wrap = gridEl.closest(".table-wrap");
+      const scrollTop = wrap ? wrap.scrollTop : 0;
+      const viewport = wrap && wrap.clientHeight > 0 ? wrap.clientHeight : ROW_HEIGHT_PX * 12;
+      const win = visibleRowWindow(grid.rows.length, scrollTop, viewport);
+      const shown = new Set(names);
+      const colCount = names.length + 1;
+      tbody.replaceChildren();
+      if (win.topPx > 0) tbody.appendChild(spacerRow(win.topPx, colCount));
+      for (let ri = win.start; ri < win.end; ri++) {
+        const row = grid.rows[ri];
+        const tr = document.createElement("tr");
+        const index = document.createElement("td");
+        index.className = "num";
+        const source = fileRowIndex(grid, ri);
+        text(index, String(source != null ? source : ri));
+        tr.appendChild(index);
+        row.forEach((cell, ci) => {
+          const col = grid.columns[ci] || "";
+          if (!shown.has(col)) return;
+          const td = document.createElement("td");
+          paintCell(td, cell, col, grid, ci);
+          td.dataset.row = String(ri);
+          td.dataset.col = col;
+          if (source != null) td.dataset.sourceRow = String(source);
+          td.addEventListener("click", () => selectCell(ri, col, cell, td, source));
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      if (win.bottomPx > 0) tbody.appendChild(spacerRow(win.bottomPx, colCount));
+      if (selectedPos && selectedPos.row >= win.start && selectedPos.row < win.end) {
+        const keep = tbody.querySelector(
+          'td.cell[data-row="' + selectedPos.row + '"][data-col="' + CSS.escape(selectedPos.column) + '"]',
+        );
+        if (keep) keep.classList.add("selected");
+      }
+    }
+
+    function revealRow(gridEl, ri) {
+      const wrap = gridEl.closest(".table-wrap");
+      if (!wrap) return;
+      const top = ri * ROW_HEIGHT_PX;
+      const view = wrap.clientHeight || ROW_HEIGHT_PX * 12;
+      const bottom = top + ROW_HEIGHT_PX;
+      if (top < wrap.scrollTop) wrap.scrollTop = top;
+      else if (bottom > wrap.scrollTop + view) wrap.scrollTop = Math.max(0, bottom - view);
+    }
+
+    function bindRowWindow(gridEl, getGrid) {
+      const wrap = gridEl && gridEl.closest(".table-wrap");
+      if (!wrap || wrap.dataset.rowWindow) return;
+      wrap.dataset.rowWindow = "1";
+      wrap.addEventListener("scroll", () => {
+        const grid = getGrid();
+        if (!grid) return;
+        paintVirtualRows(gridEl, grid, visibleNames(grid.columns));
+      });
+    }
+
+    function syncPageButtons() {
+      const prev = document.getElementById("page-prev");
+      const next = document.getElementById("page-next");
+      if (!prev || !next) return;
+      const onData = editorTab === "data";
+      const onResult = editorTab === "result";
+      const grid = onData ? lastGrid : onResult ? lastResult : null;
+      const stack = onData ? previewStack : resultStack;
+      if (!grid) {
+        prev.hidden = true;
+        next.hidden = true;
+        return;
+      }
+      const busy = pageBusy || queryRunning;
+      prev.hidden = stack.length <= 1;
+      const more = grid.completion === "truncated" || grid.completion === "partial";
+      if (onData) next.hidden = !more;
+      else next.hidden = !(more && queryTextPages(els.dql ? els.dql.value : "") && canExecuteQuery);
+      prev.disabled = busy;
+      next.disabled = busy;
+    }
+
+    function requestPage(direction) {
+      if (pageBusy || queryRunning) return;
+      const onData = editorTab === "data";
+      const grid = onData ? lastGrid : lastResult;
+      const stack = onData ? previewStack : resultStack;
+      if (!grid || !grid.rows) return;
+      let offset;
+      if (direction === "prev") {
+        if (stack.length < 2) return;
+        offset = stack[stack.length - 2];
+      } else {
+        const more = grid.completion === "truncated" || grid.completion === "partial";
+        if (!more) return;
+        if (!onData && (!queryTextPages(els.dql ? els.dql.value : "") || !canExecuteQuery)) return;
+        offset = (stack.length ? stack[stack.length - 1] : 0) + grid.rowCountReturned;
+      }
+      pageBusy = true;
+      syncPageButtons();
+      if (onData) vscode.postMessage({ type: "changePage", surface: "preview", offset });
+      else vscode.postMessage({
+        type: "changePage",
+        surface: "query",
+        offset,
+        dql: els.dql ? els.dql.value.trim() : "",
+      });
     }
 
     function renderDescribe(desc) {
@@ -340,7 +504,7 @@
           } else {
             hiddenColumns.delete(name);
           }
-          if (lastGrid) renderGrid(lastGrid);
+          if (lastGrid) renderGrid(lastGrid, true);
         });
         label.appendChild(input);
         label.appendChild(document.createTextNode(" " + name));
@@ -371,6 +535,13 @@
       }
       syncInspector();
       syncEditorFooter();
+      syncPageButtons();
+      if (name === "data" && lastGrid && els.grid) {
+        paintVirtualRows(els.grid, lastGrid, visibleNames(lastGrid.columns));
+      }
+      if (name === "result" && lastResult && els.resultGrid) {
+        paintVirtualRows(els.resultGrid, lastResult, lastResult.columns.slice());
+      }
     }
 
     function syncInspector() {
@@ -378,52 +549,38 @@
       if (!inspector) return;
       const onTable = editorTab === "data" || editorTab === "result";
       const located = !!(selectedPos && selectedPos.sourceRow != null);
-      inspector.hidden = !onTable || !located;
+      inspector.hidden = inspectorHosted || !onTable || !located;
     }
 
     function syncEditorFooter() {
       const footer = document.getElementById("editor-footer");
       if (!footer) return;
       if (editorTab === "data" && lastGrid) {
-        text(footer, previewFooter(lastGrid));
+        text(footer, lastGrid.footer || "");
         return;
       }
       if (editorTab === "result" && lastResult) {
-        text(footer, resultLine(lastResult));
+        text(footer, lastResult.footer || "");
         return;
       }
       text(footer, "");
     }
 
-    function shownRange(grid) {
-      const shown = grid.rows ? grid.rows.length : grid.rowCountReturned;
-      if (!shown) return "showing 0";
-      if (grid.totalCount !== undefined) return "showing 1–" + shown + " of " + grid.totalCount;
-      if (grid.completion === "complete") return "showing 1–" + shown + " of " + shown;
-      return "showing " + shown;
-    }
-
-    function rowsReturned(n) {
-      return n + (n === 1 ? " row returned" : " rows returned");
-    }
-
-    function previewFooter(grid) {
-      return ["Preview", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)].join(" · ");
-    }
-
     function resultLine(grid) {
-      const parts = ["Result", rowsReturned(grid.rowCountReturned), grid.completion, shownRange(grid)];
-      if (resultElapsedMs != null) parts.push(resultElapsedMs + " ms");
-      return parts.join(" · ");
+      return grid && grid.footer ? grid.footer : "";
     }
 
     function clearResult() {
       lastResult = null;
-      resultElapsedMs = null;
+      resultTitle = "";
       hasResult = false;
+      resultStack = [0];
       syncResultIdentity();
       if (els.resultEmpty) els.resultEmpty.hidden = false;
-      if (!els.result) return;
+      if (!els.result) {
+        syncPageButtons();
+        return;
+      }
       els.result.hidden = true;
       if (els.resultFooter) text(els.resultFooter, "");
       const thead = els.resultGrid && els.resultGrid.querySelector("thead");
@@ -433,6 +590,7 @@
       syncQueryActionButtons();
       syncSurfaceTabs();
       syncEditorFooter();
+      syncPageButtons();
     }
 
     function renderResult(grid) {
@@ -454,52 +612,30 @@
         hr.appendChild(th);
       }
       thead.appendChild(hr);
-      grid.rows.forEach((row, ri) => {
-        const tr = document.createElement("tr");
-        const index = document.createElement("td");
-        index.className = "num";
-        text(index, String(ri));
-        tr.appendChild(index);
-        row.forEach((cell, ci) => {
-          const col = grid.columns[ci] || "";
-          const td = document.createElement("td");
-          paintCell(td, cell, col);
-          td.dataset.row = String(ri);
-          td.dataset.col = col;
-          const source = grid.sourceRowIndexes && Number.isInteger(grid.sourceRowIndexes[ri])
-            ? grid.sourceRowIndexes[ri]
-            : null;
-          if (source != null) td.dataset.sourceRow = String(source);
-          td.addEventListener("click", () => selectCell(ri, col, cell, td, source));
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
+      const resultWrap = els.resultGrid.closest(".table-wrap");
+      if (resultWrap) resultWrap.scrollTop = 0;
+      paintVirtualRows(els.resultGrid, grid, grid.columns.slice());
       if (els.resultFooter) text(els.resultFooter, resultLine(grid));
       hasResult = true;
       syncResultIdentity();
       syncQueryActionButtons();
       syncSurfaceTabs();
       syncEditorFooter();
-    }
-
-    function queryLine() {
-      if (!els.dql) return "";
-      const single = els.dql.value.replace(/\s+/g, " ").trim();
-      return single.length > 80 ? single.slice(0, 79) + "…" : single;
+      syncPageButtons();
     }
 
     function syncResultIdentity() {
       const label = document.getElementById("result-label");
+      const title = resultTitle || "Result";
+      if (els.tabResult) text(els.tabResult, hasResult ? title : "Result");
       if (!label) return;
-      const line = queryLine();
       const titleEl = document.getElementById("title");
       const file = titleEl ? titleEl.textContent.trim() : "";
-      if (!hasResult || !line) {
+      if (!hasResult) {
         text(label, "Result");
         return;
       }
-      text(label, file ? line + " — " + file : line);
+      text(label, file ? title + "\n" + file : title);
     }
 
     function showChangesDiff(value) {
@@ -520,7 +656,7 @@
       syncSurfaceTabs();
     }
 
-    function renderGrid(grid) {
+    function renderGrid(grid, keepScroll) {
       lastGrid = grid;
       if (els.gridLabel) text(els.gridLabel, "Preview sample");
       const thead = els.grid.querySelector("thead");
@@ -567,34 +703,9 @@
         hr.appendChild(th);
       }
       thead.appendChild(hr);
-      grid.rows.forEach((row, ri) => {
-        const tr = document.createElement("tr");
-        row.forEach((cell, ci) => {
-          const col = grid.columns[ci] || "";
-          if (!shown.has(col)) return;
-          const td = document.createElement("td");
-          paintCell(td, cell, col);
-          td.dataset.row = String(ri);
-          td.dataset.col = col;
-          td.dataset.sourceRow = String(ri);
-          td.addEventListener("click", () => selectCell(ri, col, cell, td, ri));
-          tr.appendChild(td);
-        });
-        tr.insertBefore((() => {
-          const td = document.createElement("td");
-          td.className = "num";
-          text(td, String(ri));
-          return td;
-        })(), tr.firstChild);
-        tbody.appendChild(tr);
-      });
-      if (selectedPos) {
-        const keep = tbody.querySelector(
-          'td.cell[data-row="' + selectedPos.row + '"][data-col="' + CSS.escape(selectedPos.column) + '"]',
-        );
-        if (keep) keep.classList.add("selected");
-        else selectedPos = null;
-      }
+      const previewWrap = els.grid.closest(".table-wrap");
+      if (previewWrap && !keepScroll) previewWrap.scrollTop = 0;
+      paintVirtualRows(els.grid, grid, names);
       syncFilterColumns(grid.columns);
       syncColumnPicker(grid.columns);
       const parts = [
@@ -608,6 +719,7 @@
       text(els.cost, parts.join(" · "));
       syncInspector();
       syncEditorFooter();
+      syncPageButtons();
     }
 
     function formatBytes(n) {
@@ -652,8 +764,11 @@
       return found ? found.inferredType : "";
     }
 
-    function paintCell(td, display, name) {
+    function paintCell(td, display, name, grid, columnIndex) {
       td.className = "cell";
+      const alignEnd = !!(grid && grid.cellAlignEnd && grid.cellAlignEnd[columnIndex]);
+      const pill = !!(grid && grid.cellPill && grid.cellPill[columnIndex]);
+      if (alignEnd) td.classList.add("cell-end");
       if (display === "null") td.classList.add("cell-null");
       else if (display === "·") td.classList.add("cell-missing");
       else {
@@ -663,6 +778,13 @@
           kind === "boolean" || kind === "date" || kind === "datetime"
         ) {
           td.classList.add("cell-type-" + kind);
+        }
+        if (pill) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          text(badge, display);
+          td.replaceChildren(badge);
+          return;
         }
       }
       text(td, display);
@@ -675,7 +797,9 @@
       const name = selected ? selected.column : "";
       cellEditor = null;
       if (td) {
-        paintCell(td, display, name);
+        const grid = editorTab === "result" ? lastResult : lastGrid;
+        const columnIndex = grid && grid.columns ? grid.columns.indexOf(name) : -1;
+        paintCell(td, display, name, grid, columnIndex);
         td.classList.add("selected");
       }
     }
@@ -774,6 +898,7 @@
         text(els.inspectDetail, "This result does not point at a file row.");
         setEditEnabled(false);
         syncInspector();
+        vscode.postMessage({ type: "inspectorFocus" });
         return;
       }
       setEditEnabled(canEdit);
@@ -784,7 +909,12 @@
         text(els.inspectDetail, "Loading…");
       }
       syncInspector();
-      vscode.postMessage({ type: "inspectCell", rowIndex: sourceRow, column });
+      vscode.postMessage({
+        type: "inspectCell",
+        rowIndex: sourceRow,
+        column,
+        dataCell: editorTab === "data",
+      });
     }
 
     function setEditEnabled(on) {
@@ -847,30 +977,44 @@
       }
     }
 
-    els.grid.addEventListener("keydown", (event) => {
-      if (!lastGrid) return;
+    function moveSelection(gridEl, grid, event) {
+      if (!gridEl || !grid) return;
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
         return;
       }
-      const names = visibleNames(lastGrid.columns);
-      if (!names.length || !lastGrid.rows.length) return;
+      const names = visibleNames(grid.columns);
+      if (!names.length || !grid.rows.length) return;
       event.preventDefault();
-      let ri = selectedPos ? selectedPos.row : 0;
+      let ri = selectedPos && selectedPos.row < grid.rows.length ? selectedPos.row : 0;
       let ci = selectedPos ? names.indexOf(selectedPos.column) : 0;
       if (ci < 0) ci = 0;
       if (event.key === "ArrowUp") ri = Math.max(0, ri - 1);
-      if (event.key === "ArrowDown") ri = Math.min(lastGrid.rows.length - 1, ri + 1);
+      if (event.key === "ArrowDown") ri = Math.min(grid.rows.length - 1, ri + 1);
       if (event.key === "ArrowLeft") ci = Math.max(0, ci - 1);
       if (event.key === "ArrowRight") ci = Math.min(names.length - 1, ci + 1);
       const name = names[ci];
-      const sourceIndex = lastGrid.columns.indexOf(name);
-      const td = els.grid.querySelector(
+      const sourceIndex = grid.columns.indexOf(name);
+      if (sourceIndex < 0) return;
+      revealRow(gridEl, ri);
+      paintVirtualRows(gridEl, grid, names);
+      const td = gridEl.querySelector(
         'td.cell[data-row="' + ri + '"][data-col="' + CSS.escape(name) + '"]',
       );
-      if (!td || sourceIndex < 0) return;
-      selectCell(ri, name, lastGrid.rows[ri][sourceIndex], td, ri);
+      if (!td) return;
+      selectCell(ri, name, grid.rows[ri][sourceIndex], td, fileRowIndex(grid, ri));
       td.scrollIntoView({ block: "nearest", inline: "nearest" });
-    });
+    }
+
+    els.grid.addEventListener("keydown", (event) => moveSelection(els.grid, lastGrid, event));
+    if (els.resultGrid) {
+      els.resultGrid.addEventListener("keydown", (event) => moveSelection(els.resultGrid, lastResult, event));
+    }
+    bindRowWindow(els.grid, () => lastGrid);
+    if (els.resultGrid) bindRowWindow(els.resultGrid, () => lastResult);
+    const pagePrev = document.getElementById("page-prev");
+    const pageNext = document.getElementById("page-next");
+    if (pagePrev) pagePrev.addEventListener("click", () => requestPage("prev"));
+    if (pageNext) pageNext.addEventListener("click", () => requestPage("next"));
 
     document.addEventListener("keydown", (event) => {
       const tag = document.activeElement && document.activeElement.tagName;
@@ -1010,6 +1154,7 @@
       queryOk = false;
       syncQuerySummary();
       syncQueryActionButtons();
+      syncPageButtons();
       schedulePlan();
     });
 
@@ -1038,6 +1183,8 @@
       if (!canExecuteQuery) return;
       const dql = els.dql.value.trim();
       if (!dql) return;
+      resultStack = [0];
+      syncPageButtons();
       vscode.postMessage({ type: "runQuery", dql });
     });
 
@@ -1153,6 +1300,16 @@
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (!msg || typeof msg.type !== "string") return;
+      if (msg.type === "inspectorHosted") {
+        inspectorHosted = !!msg.hosted;
+        syncInspector();
+        return;
+      }
+      if (msg.type === "showEditorTab") {
+        if (msg.tab === "result" && !hasResult) return;
+        if (msg.tab === "data" || msg.tab === "result") showEditorTab(msg.tab);
+        return;
+      }
       if (msg.type === "requestDql") {
         vscode.postMessage({
           type: "reportDql",
@@ -1192,9 +1349,11 @@
       }
       if (msg.type === "queryState") {
         queryRunning = !!msg.running;
+        if (!queryRunning) pageBusy = false;
         els.run.disabled = queryRunning || !canExecuteQuery;
         if (els.plan) els.plan.disabled = queryRunning || !canExecuteQuery;
         syncQueryActionButtons();
+        syncPageButtons();
         return;
       }
       if (msg.type === "savedQueries") {
@@ -1247,6 +1406,7 @@
         text(els.editDiff, "");
         showChangesDiff("");
         selected = null;
+        previewStack = [0];
         renderDescribe(msg.describe);
         renderIngestDiagnostics(msg.ingestDiagnostics);
         renderGrid(msg.preview);
@@ -1302,6 +1462,8 @@
           selected = null;
           selectedPos = null;
           inspectRaw = "";
+          previewStack = [0];
+          pageBusy = false;
           renderEditorSummary(h, msg.preview);
           renderGrid(msg.preview);
           clearResult();
@@ -1312,22 +1474,34 @@
         }
         return;
       }
+      if (msg.type === "previewPage") {
+        pageBusy = false;
+        previewStack = rememberPageOffset(previewStack, msg.offset);
+        selectedPos = null;
+        renderGrid(msg.preview);
+        showEditorTab("data");
+        return;
+      }
       if (msg.type === "queryResult") {
+        pageBusy = false;
+        if (typeof msg.offset === "number") resultStack = rememberPageOffset(resultStack, msg.offset);
+        else resultStack = [0];
         renderDqlDiagnostics(msg.diagnostics);
         queryOk = !(msg.diagnostics || []).some((d) => d.severity === "error");
-        resultElapsedMs = typeof msg.elapsedMs === "number" && msg.elapsedMs >= 0
-          ? Math.round(msg.elapsedMs)
-          : null;
+        resultTitle = typeof msg.resultTitle === "string" ? msg.resultTitle : "";
+        selectedPos = null;
         renderResult(msg.result);
         syncQueryActionButtons();
         showEditorTab("result");
         return;
       }
       if (msg.type === "error") {
+        pageBusy = false;
         if (els.loading) els.loading.hidden = true;
         queryOk = false;
         renderDqlDiagnostics([{ severity: "error", message: msg.message }]);
         syncQueryActionButtons();
+        syncPageButtons();
       }
     });
   } catch (err) {

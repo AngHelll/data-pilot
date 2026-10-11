@@ -2,7 +2,7 @@
 
 **Fecha:** 7 de octubre de 2026  
 **Versión:** 0.1  
-**Estado:** dirección de diseño acordada. Las specs 1–18 de la fase 7 están verificadas. Las specs 19 y 20 están implementadas. El tag `v0.2.0` publica esta rama. La sección 2 es la captura anterior a ese workspace.
+**Estado:** dirección de diseño acordada. Las specs 1–18 y 22–24 de la fase 7 están verificadas. Las specs 19 y 21 están implementadas. El tag `v0.2.0` es el corte anterior de esta rama. La sección 2 es la captura anterior a ese workspace.
 
 Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos. No existe `docs/ROADMAP.md`. El turno de este diseño es la **fase 7**, que ya es la superficie actual del workspace. Las fases 5 y 6 son el cierre v0.1 y el empaquetado anteriores. La fase 8 (CLI/agentes) es una superficie aparte ya verificada.
 
@@ -153,7 +153,7 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 
 **Recomendación: B, con turno en la fase 7.** El diseño queda registrado. No se implementa dentro de las fases 5 ni 6.
 
-- Un CSV abierto como texto sigue siendo texto. Datasets lo lista. El schema está en el editor central (`dataPilot.dataset`, prioridad `option`). No hay asociación por defecto de `*.csv`.
+- Un CSV abierto como texto sigue siendo texto. Datasets lo lista junto con los archivos soportados de la carpeta, sin abrirlo. El schema está en el editor central (`dataPilot.dataset`, prioridad `option`). No hay asociación por defecto de `*.csv`.
 - `DatasetStore` guarda varias sesiones por `datasetId`. Las specs 1, 2 y 3 de la fase 7 están verificadas: ownership, Activity Bar con tabla central e inspector, y el editor DQL nativo.
 - No hay `CustomDocument` con save/undo/revert. La fase 7 conserva Preview diff + Apply save (escritura solo en el host), budgets, trust y DQL `where`.
 - El editor DQL nativo (`.dql`, `data-pilot-dql`) es la spec 3 de la fase 7 y está verificada. El enlace al dataset es explícito.
@@ -174,6 +174,10 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 - La spec 18 está verificada: si el preview terminó el archivo, la cabecera muestra ese conteo. Si el scan se cortó, sigue el total desconocido.
 - La spec 19 está implementada: el panel Result nombra la consulta y el archivo. La pestaña sigue diciendo Result.
 - La spec 20 está implementada: Changes muestra el último diff. Apply save sigue en el inspector.
-- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 de arriba están verificadas. Las specs 19 y 20 están implementadas.
+- La spec 21 está implementada: Datasets lista los CSV, JSONL y NDJSON de la carpeta sin abrirlos. El icono dice el formato y el color el estado. Delete quita una consulta guardada. Abrir desde Data Pilot deja una pestaña.
+- La spec 22 está verificada: una consulta guardada puede tener nombre. La status bar dice el archivo y la última operación. El pie de Preview y Result dice filas, cierre y rango visible. La pestaña Result usa el nombre. Las celdas cortas de pocos valores son una ficha del tema.
+- La spec 23 está verificada: Jobs lista el preview y la query de esta ventana. Una query con nombre se lee ahí. Elegir una fila completada enfoca Result si ese resultado sigue. Cell inspector muestra la celda de Data y oculta la franja del editor mientras la vista está visible.
+- La spec 24 está verificada: Data y Result pintan la ventana visible. Next page y Previous page recorren el archivo con los techos de hoy. La cabecera dice el total solo cuando esa lectura llega al final.
+- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 y 22–24 de arriba están verificadas. Las specs 19 y 21 están implementadas.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.
