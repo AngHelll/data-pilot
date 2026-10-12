@@ -2,7 +2,7 @@
 
 **Fecha:** 7 de octubre de 2026  
 **Versión:** 0.1  
-**Estado:** dirección de diseño acordada. Las specs 1–18 y 22–24 de la fase 7 están verificadas. Las specs 19 y 21 están implementadas. El tag `v0.2.0` es el corte anterior de esta rama. La sección 2 es la captura anterior a ese workspace.
+**Estado:** dirección de diseño acordada. Las specs 1–18 y 22–25 de la fase 7 están verificadas. Las specs 19 y 21 están implementadas. El tag `v0.2.0` es el corte anterior de esta rama. La sección 2 es la captura anterior a ese workspace.
 
 Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos. No existe `docs/ROADMAP.md`. El turno de este diseño es la **fase 7**, que ya es la superficie actual del workspace. Las fases 5 y 6 son el cierre v0.1 y el empaquetado anteriores. La fase 8 (CLI/agentes) es una superficie aparte ya verificada.
 
@@ -48,14 +48,14 @@ Estructura de arriba hacia abajo:
 2. Pestañas internas: Data primero; Profile y Changes aparecen cuando sus capacidades estén implementadas. Compare/Validation solo al llegar a sus fases.
 3. Toolbar: filtros visuales, selector de columnas, búsqueda, export y menú de acciones secundarias.
 4. Tabla virtualizada que ocupa el espacio principal. Selección de celda/fila, navegación por teclado, columnas ajustables y scroll horizontal.
-5. Inspector plegable dentro del custom editor: columna, tipo, valor raw acotado, copiar y editar cuando permitido.
+5. Inspector plegable dentro del custom editor: columna, tipo, valor raw acotado y copiar. La edición se teclea en la celda.
 6. Pie: alcance, filas devueltas, completitud/truncamiento y estado de ejecución.
 
 El inspector puede ocupar una franja derecha dentro del editor y colapsarse en ventanas estrechas. No se promete insertar arbitrariamente UI debajo de un editor de texto nativo.
 
 Acciones contextuales:
 
-“Edit value” aparece cuando hay celda seleccionada y edición soportada. “Review changes” muestra el plan antes de guardar. Export actúa sobre un resultado identificado, no sobre una tabla ambigua. Detalles de revisión, path completo y parsing se abren desde información del dataset.
+Enter en una celda de Data abre el valor crudo y, al confirmar, la tabla muestra ese valor. Changes guarda el último diff sin cambiar de pestaña. Export actúa sobre un resultado identificado, no sobre una tabla ambigua. Detalles de revisión, path completo y parsing se abren desde información del dataset.
 
 Run es la acción principal de query. La validación sintáctica puede ser automática si es barata y no ejecuta scans. No ejecutar consultas sobre el dataset por cada tecla. “Check query” puede desaparecer como botón prominente sin perder el servicio de validación.
 
@@ -76,7 +76,7 @@ Vista del origen vs salida:
 
 `users.csv — Data` representa el dataset. Un resultado puede identificarse como `Active MX users — Results`, con fuente, revisión y query asociadas.
 
-Si `select id, name, balance` se ejecutó, el resultado tiene esas tres columnas. La tabla de origen puede conservar más columnas, pero no presentarse como si fuera ese resultado. Resultados agregados no son filas editables del origen. Editar un resultado filtrado/proyectado solo será posible si mantiene localizadores verificables hacia la revisión de origen.
+Si `select id, name, balance` se ejecutó, el resultado tiene esas tres columnas. La tabla de origen puede conservar más columnas, pero no presentarse como si fuera ese resultado. Resultados agregados no son filas editables del origen. Editar un resultado filtrado/proyectado solo será posible si mantiene localizadores verificables hacia la revisión de origen. Ese gesto es Enter en la celda y la tabla muestra el valor nuevo.
 
 Una respuesta atrasada no reemplaza un resultado nuevo. Estado de celda/inspector se vincula a dataset, revisión y resultado, no solamente a índice de fila.
 
@@ -178,6 +178,7 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 - La spec 22 está verificada: una consulta guardada puede tener nombre. La status bar dice el archivo y la última operación. El pie de Preview y Result dice filas, cierre y rango visible. La pestaña Result usa el nombre. Las celdas cortas de pocos valores son una ficha del tema.
 - La spec 23 está verificada: Jobs lista el preview y la query de esta ventana. Una query con nombre se lee ahí. Elegir una fila completada enfoca Result si ese resultado sigue. Cell inspector muestra la celda de Data y oculta la franja del editor mientras la vista está visible.
 - La spec 24 está verificada: Data y Result pintan la ventana visible. Next page y Previous page recorren el archivo con los techos de hoy. La cabecera dice el total solo cuando esa lectura llega al final.
-- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 y 22–24 de arriba están verificadas. Las specs 19 y 21 están implementadas.
+- La spec 25 está verificada: Enter edita el valor crudo en la celda y la tabla muestra el valor nuevo al momento. Changes guarda el último diff y no se abre solo. La franja queda para columna, tipo, valor crudo y copiar. Cell inspector salió del Activity Bar.
+- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 y 22–25 de arriba están verificadas. Las specs 19 y 21 están implementadas.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

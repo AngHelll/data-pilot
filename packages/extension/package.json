@@ -25,7 +25,6 @@
     "onView:dataPilot.datasets",
     "onView:dataPilot.savedQueries",
     "onView:dataPilot.jobs",
-    "onView:dataPilot.cellInspector",
     "onCommand:dataPilot.openHostJob",
     "onCommand:dataPilot.cancelHostJob",
     "onCommand:dataPilot.openSavedQuery",
@@ -164,11 +163,6 @@
         {
           "id": "dataPilot.jobs",
           "name": "Jobs"
-        },
-        {
-          "id": "dataPilot.cellInspector",
-          "name": "Cell inspector",
-          "type": "webview"
         }
       ]
     },

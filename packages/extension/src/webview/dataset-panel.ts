@@ -8,7 +8,6 @@ import { activityOutcome, activityText, columnPresentation, gridFooter, resultTa
 import { queryStagesPage } from "../row-window";
 import { noteEditorActivity } from "../editor-activity";
 import type { HostJobLog } from "../host-jobs";
-import { emitInspector, inspectorIsHosted, type InspectorCell } from "../inspector-hub";
 import { filterToDql } from "../filter-dql";
 import { formatCell, formatCells } from "../format-cell";
 import {
@@ -147,7 +146,7 @@ function editorPanelHtml(
   <title>${escapeHtml(title)}</title>
   <link rel="stylesheet" href="${escapeHtml(String(styleUri))}" />
 </head>
-<body data-layout="editor">
+<body data-layout="editor" class="inspector-collapsed">
   <div class="editor-split">
   <div class="editor-main">
   <div class="editor-chrome">
@@ -295,7 +294,7 @@ function editorPanelHtml(
   <section id="inspector" hidden>
     <div class="row-actions">
       <label>Cell inspector</label>
-      <button id="inspector-toggle" type="button">Hide inspector</button>
+      <button id="inspector-toggle" type="button">Show inspector</button>
     </div>
     <div id="inspector-body">
       <dl class="inspect-fields">
@@ -305,13 +304,6 @@ function editorPanelHtml(
       </dl>
       <p class="hint" id="inspect-detail"></p>
       <button id="copy-cell" type="button">Copy value</button>
-      <label class="toolbar-label" for="edit-value">Edit value</label>
-      <input id="edit-value" class="cell-edit" type="text" placeholder="New raw value" disabled />
-      <div class="row-actions">
-        <button id="preview-edit" type="button" disabled>Preview diff</button>
-        <button id="apply-edit" type="button" disabled>Apply save</button>
-      </div>
-      <pre class="diff" id="edit-diff"></pre>
     </div>
   </section>
   </div>
@@ -438,7 +430,6 @@ class DatasetViewSession {
   private loadGeneration = 0;
   private loadInFlight = false;
   private inspectSeq = 0;
-  private dataCell: InspectorCell | undefined;
   private lastSessionPayload:
     | Extract<HostToWebviewMessage, { type: "session" }>
     | undefined;
@@ -469,7 +460,6 @@ class DatasetViewSession {
     this.peersSub = options.engine.onSessionsChanged(() => {
       this.postComparePeers();
     });
-    if (inspectorIsHosted()) this.post({ type: "inspectorHosted", hosted: true });
   }
 
   datasetPath(): string | undefined {
@@ -488,19 +478,13 @@ class DatasetViewSession {
     this.editorActive = active;
     if (active) {
       activeEditorSession = this;
-      this.publishInspector();
     } else if (activeEditorSession === this) {
       activeEditorSession = undefined;
-      emitInspector({ type: "empty" });
     }
   }
 
   showTab(tab: "data" | "result"): void {
     this.post({ type: "showEditorTab", tab });
-  }
-
-  noteInspectorHosted(hosted: boolean): void {
-    this.post({ type: "inspectorHosted", hosted });
   }
 
   async copyText(text: string): Promise<void> {
@@ -511,10 +495,8 @@ class DatasetViewSession {
     try {
       const preview = await this.engine.proposeEdit(this.requireDatasetId(), rowIndex, column, newRaw);
       this.post({ type: "editPreview", preview });
-      emitInspector({ type: "diff", diff: preview.unifiedDiff });
     } catch (err) {
       this.reportError(err);
-      emitInspector({ type: "notice", message: errorMessage(err) });
     }
   }
 
@@ -522,21 +504,17 @@ class DatasetViewSession {
     this.holdOwnWrite();
     try {
       const applied = await this.engine.applyEdit(this.requireDatasetId(), rowIndex, column, newRaw);
-      if (!applied.written) {
+      if (applied.editPreview.unifiedDiff) {
         this.post({ type: "editPreview", preview: applied.editPreview });
-        emitInspector({ type: "diff", diff: applied.editPreview.unifiedDiff });
-        return;
       }
+      if (!applied.written) return;
       void vscode.window.showInformationMessage(
         `Saved ${applied.editPreview.column} @ row ${applied.editPreview.rowIndex}`,
       );
-      this.dataCell = undefined;
-      this.publishInspector();
       this.holdOwnWrite();
       await this.loadDataset(applied.path);
     } catch (err) {
       this.reportError(err);
-      emitInspector({ type: "notice", message: errorMessage(err) });
     }
   }
 
@@ -596,18 +574,6 @@ class DatasetViewSession {
 
   private reportError(err: unknown): void {
     this.post({ type: "error", message: errorMessage(err) });
-  }
-
-  publishInspector(): void {
-    if (!this.editorActive) return;
-    if (!this.dataCell) {
-      emitInspector({ type: "empty" });
-      return;
-    }
-    emitInspector({
-      type: "cell",
-      cell: { ...this.dataCell, canEdit: this.engine.canEdit() },
-    });
   }
 
   private postComparePeers(): void {
@@ -727,7 +693,6 @@ class DatasetViewSession {
     if (this.lastSessionPayload) {
       void this.deliverToWebview(this.lastSessionPayload);
     }
-    void this.deliverToWebview({ type: "inspectorHosted", hosted: inspectorIsHosted() });
   }
 
   private markWebviewReady(): void {
@@ -1099,18 +1064,12 @@ class DatasetViewSession {
 
     if (msg.type === "inspectorFocus") {
       this.inspectSeq += 1;
-      this.dataCell = undefined;
-      this.publishInspector();
       return;
     }
 
     if (msg.type === "inspectCell") {
       const generation = this.loadGeneration;
       const seq = ++this.inspectSeq;
-      if (!msg.dataCell) {
-        this.dataCell = undefined;
-        this.publishInspector();
-      }
       try {
         const detail = await this.engine.inspectCell(boundDatasetId(), msg.rowIndex, msg.column);
         if (generation !== this.loadGeneration || seq !== this.inspectSeq) return;
@@ -1122,18 +1081,6 @@ class DatasetViewSession {
           raw: detail.raw,
           inferredType: detail.inferredType,
         });
-        if (msg.dataCell && this.currentFilePath) {
-          this.dataCell = {
-            filePath: this.currentFilePath,
-            fileName: path.basename(this.currentFilePath),
-            rowIndex: msg.rowIndex,
-            column: msg.column,
-            inferredType: detail.inferredType,
-            raw: detail.raw,
-            canEdit: this.engine.canEdit(),
-          };
-          this.publishInspector();
-        }
       } catch (err) {
         showErr(err);
       }
@@ -1436,41 +1383,6 @@ export function revealDatasetTab(filePath: string, tab: "data" | "result"): void
     return;
   }
   pendingReveal.set(key, tab);
-}
-
-export function republishActiveInspector(): void {
-  if (activeEditorSession?.isEditorActive()) {
-    activeEditorSession.publishInspector();
-    return;
-  }
-  emitInspector({ type: "empty" });
-}
-
-export function broadcastInspectorHosted(hosted: boolean): void {
-  for (const session of editorSessions) session.noteInspectorHosted(hosted);
-}
-
-export async function copyActiveCell(filePath: string, text: string): Promise<void> {
-  const session = activeEditorSession;
-  if (!session?.isEditorActive() || !sameFile(session.datasetPath(), filePath)) return;
-  await session.copyText(text);
-}
-
-export async function editActiveCell(
-  action: "propose" | "apply",
-  filePath: string,
-  rowIndex: number,
-  column: string,
-  newRaw: string,
-): Promise<void> {
-  const session = activeEditorSession;
-  if (!session?.isEditorActive() || !sameFile(session.datasetPath(), filePath)) return;
-  if (action === "propose") await session.proposeCellEdit(rowIndex, column, newRaw);
-  else await session.applyCellEdit(rowIndex, column, newRaw);
-}
-
-function sameFile(current: string | undefined, filePath: string): boolean {
-  return current !== undefined && path.resolve(current) === path.resolve(filePath);
 }
 
 /** Resolved paths of dataset editors that already have a file open. */

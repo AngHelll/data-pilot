@@ -12,7 +12,6 @@ import { SavedQueryTreeProvider } from "./saved-query-view";
 import { registerDqlEditor } from "./dql-editor";
 import { HostJobLog, hostJobOpen, type HostJob } from "./host-jobs";
 import { HostJobTreeProvider } from "./host-job-view";
-import { CELL_INSPECTOR_VIEW_ID, CellInspectorView } from "./cell-inspector-view";
 import { revealDatasetTab } from "./webview/dataset-panel";
 import { dataPilotLog, logInfo } from "./log";
 import { SavedQueryStore } from "./saved-query-store";
@@ -60,9 +59,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     savedQueriesTree,
     vscode.window.registerTreeDataProvider("dataPilot.jobs", jobsTree),
     jobsTree,
-    vscode.window.registerWebviewViewProvider(CELL_INSPECTOR_VIEW_ID, new CellInspectorView(context.extensionUri), {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
   );
 
   const openFromUri = async (uri: vscode.Uri): Promise<void> => {

@@ -20,7 +20,7 @@
     let appliedSearch = "";
     let editorTab = "data";
     let hasResult = false;
-    let inspectorHosted = false;
+    let openEditWhenReady = false;
     let queryOk = false;
     let queryRunning = false;
     const hiddenColumns = new Set();
@@ -55,10 +55,6 @@
       gridLabel: document.getElementById("grid-label"),
       grid: document.getElementById("grid"),
       inspectDetail: document.getElementById("inspect-detail"),
-      editValue: document.getElementById("edit-value"),
-      previewEdit: document.getElementById("preview-edit"),
-      applyEdit: document.getElementById("apply-edit"),
-      editDiff: document.getElementById("edit-diff"),
       result: document.getElementById("result"),
       resultGrid: document.getElementById("result-grid"),
       resultFooter: document.getElementById("result-footer"),
@@ -547,9 +543,9 @@
     function syncInspector() {
       const inspector = document.getElementById("inspector");
       if (!inspector) return;
-      const onTable = editorTab === "data" || editorTab === "result";
+      const onData = editorTab === "data";
       const located = !!(selectedPos && selectedPos.sourceRow != null);
-      inspector.hidden = inspectorHosted || !onTable || !located;
+      inspector.hidden = !onData || !located;
     }
 
     function syncEditorFooter() {
@@ -756,8 +752,9 @@
     }
 
     let cellEditor = null;
-    let pendingConfirm = null;
     let inspectReady = false;
+    let changesPath = "";
+    let pendingRevert = null;
 
     function inferredOf(name) {
       const found = columnTypes.find((col) => col && col.name === name);
@@ -804,50 +801,77 @@
       }
     }
 
+    function activeGridEl() {
+      return editorTab === "result" && els.resultGrid ? els.resultGrid : els.grid;
+    }
+
+    function activeGrid() {
+      return editorTab === "result" && lastResult ? lastResult : lastGrid;
+    }
+
+    function repaintActiveGrid() {
+      const gridEl = activeGridEl();
+      const grid = activeGrid();
+      if (!gridEl || !grid) return;
+      const names = editorTab === "result" ? grid.columns.slice() : visibleNames(grid.columns);
+      paintVirtualRows(gridEl, grid, names);
+    }
+
+    function writeCellText(rowIndex, column, value) {
+      for (const grid of [lastGrid, lastResult]) {
+        if (!grid || !grid.rows) continue;
+        for (let ri = 0; ri < grid.rows.length; ri++) {
+          if (fileRowIndex(grid, ri) !== rowIndex) continue;
+          const ci = grid.columns.indexOf(column);
+          if (ci >= 0 && grid.rows[ri]) grid.rows[ri][ci] = value;
+        }
+      }
+      repaintActiveGrid();
+    }
+
     function beginCellEdit() {
-      if (!canEdit || !selected || selected.rowIndex == null) return;
+      if (!canEdit || !selected || selected.rowIndex == null || cellEditor) return;
+      if (!inspectReady) {
+        openEditWhenReady = true;
+        return;
+      }
+      openEditWhenReady = false;
       const td = document.querySelector("td.cell.selected");
-      if (!td || cellEditor) return;
+      if (!td) return;
       const input = document.createElement("input");
       input.className = "cell-editor";
-      input.value = selected.display === "null" || selected.display === "·" ? "" : selected.display;
+      input.value = inspectRaw;
       td.replaceChildren(input);
       cellEditor = input;
       input.focus();
       input.select();
       input.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.stopPropagation();
+          return;
+        }
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
+          openEditWhenReady = false;
           closeCellEditor();
         }
         if (event.key === "Enter") {
           event.preventDefault();
           event.stopPropagation();
           const next = input.value;
-          const previous = selected.display === "null" || selected.display === "·" ? "" : selected.display;
-          closeCellEditor();
-          if (next === previous) return;
-          pendingConfirm = { rowIndex: selected.rowIndex, column: selected.column, newRaw: next };
-          vscode.postMessage({
-            type: "proposeEdit",
-            rowIndex: selected.rowIndex,
-            column: selected.column,
-            newRaw: next,
-          });
+          const rowIndex = selected.rowIndex;
+          const column = selected.column;
+          cellEditor = null;
+          if (next === inspectRaw) {
+            repaintActiveGrid();
+            return;
+          }
+          pendingRevert = { rowIndex, column, display: selected.display };
+          selected.display = next;
+          writeCellText(rowIndex, column, next);
+          vscode.postMessage({ type: "applyEdit", rowIndex, column, newRaw: next });
         }
-      });
-    }
-
-    function confirmPendingEdit() {
-      if (!pendingConfirm || !canEdit) return;
-      const edit = pendingConfirm;
-      pendingConfirm = null;
-      vscode.postMessage({
-        type: "applyEdit",
-        rowIndex: edit.rowIndex,
-        column: edit.column,
-        newRaw: edit.newRaw,
       });
     }
 
@@ -882,7 +906,7 @@
 
     function selectCell(viewRow, column, display, td, sourceRow) {
       closeCellEditor();
-      pendingConfirm = null;
+      openEditWhenReady = false;
       inspectReady = false;
       inspectRaw = "";
       for (const el of document.querySelectorAll("td.cell.selected")) {
@@ -891,17 +915,13 @@
       td.classList.add("selected");
       selected = { rowIndex: sourceRow, column, display };
       selectedPos = { row: viewRow, column, sourceRow };
-      els.editValue.value = display === "null" || display === "·" ? "" : display;
-      text(els.editDiff, "");
       if (sourceRow == null) {
         if (document.getElementById("inspect-column")) paintInspector(column, "", "", true);
         text(els.inspectDetail, "This result does not point at a file row.");
-        setEditEnabled(false);
         syncInspector();
         vscode.postMessage({ type: "inspectorFocus" });
         return;
       }
-      setEditEnabled(canEdit);
       if (document.getElementById("inspect-column")) {
         paintInspector(column, "", "", true);
         text(els.inspectDetail, "");
@@ -915,12 +935,6 @@
         column,
         dataCell: editorTab === "data",
       });
-    }
-
-    function setEditEnabled(on) {
-      els.editValue.disabled = !on;
-      els.previewEdit.disabled = !on;
-      els.applyEdit.disabled = !on;
     }
 
     function syncQuerySummary() {
@@ -1030,8 +1044,7 @@
         (els.resultGrid && (active === els.resultGrid || els.resultGrid.contains(active)));
       if (event.key !== "Enter" || typing || !inGrid || !selectedPos) return;
       event.preventDefault();
-      if (pendingConfirm) confirmPendingEdit();
-      else beginCellEdit();
+      beginCellEdit();
     });
 
     const applyFilter = document.getElementById("apply-filter");
@@ -1257,16 +1270,6 @@
       text(els.staleBanner, "");
     }
 
-    els.previewEdit.addEventListener("click", () => {
-      if (!canEdit || !selected) return;
-      vscode.postMessage({
-        type: "proposeEdit",
-        rowIndex: selected.rowIndex,
-        column: selected.column,
-        newRaw: els.editValue.value,
-      });
-    });
-
     if (els.tabData) els.tabData.addEventListener("click", () => showEditorTab("data"));
     if (els.tabResult) els.tabResult.addEventListener("click", () => showEditorTab("result"));
     if (els.tabCompare) els.tabCompare.addEventListener("click", () => showEditorTab("compare"));
@@ -1287,24 +1290,9 @@
       });
     }
 
-    els.applyEdit.addEventListener("click", () => {
-      if (!canEdit || !selected) return;
-      vscode.postMessage({
-        type: "applyEdit",
-        rowIndex: selected.rowIndex,
-        column: selected.column,
-        newRaw: els.editValue.value,
-      });
-    });
-
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (!msg || typeof msg.type !== "string") return;
-      if (msg.type === "inspectorHosted") {
-        inspectorHosted = !!msg.hosted;
-        syncInspector();
-        return;
-      }
       if (msg.type === "showEditorTab") {
         if (msg.tab === "result" && !hasResult) return;
         if (msg.tab === "data" || msg.tab === "result") showEditorTab(msg.tab);
@@ -1328,7 +1316,6 @@
         els.run.disabled = !canExecuteQuery;
         if (els.plan) els.plan.disabled = !canExecuteQuery;
         els.dql.disabled = !canExecuteQuery;
-        setEditEnabled(canEdit);
         syncQueryActionButtons();
         renderSavedQueries(msg.savedQueries);
         if (msg.trustMode === "untrusted-limited") {
@@ -1394,16 +1381,23 @@
               " · raw: " + JSON.stringify(msg.raw),
           );
         }
+        if (
+          openEditWhenReady &&
+          selected &&
+          selected.rowIndex === msg.rowIndex &&
+          selected.column === msg.column
+        ) {
+          beginCellEdit();
+        }
         return;
       }
       if (msg.type === "editPreview") {
-        const diff = msg.preview.unifiedDiff || "(no changes)";
-        text(els.editDiff, diff);
-        showChangesDiff(diff);
+        const diff = msg.preview && msg.preview.unifiedDiff ? msg.preview.unifiedDiff : "";
+        if (diff) showChangesDiff(diff);
         return;
       }
       if (msg.type === "editApplied") {
-        text(els.editDiff, "");
+        openEditWhenReady = false;
         showChangesDiff("");
         selected = null;
         previewStack = [0];
@@ -1457,10 +1451,15 @@
           renderIngestDiagnostics(msg.ingestDiagnostics);
           renderDqlDiagnostics([]);
           text(els.dqlFormatted, "");
-          text(els.editDiff, "");
-          showChangesDiff("");
+          if (filePath !== changesPath) {
+            showChangesDiff("");
+            changesPath = filePath;
+          }
           selected = null;
           selectedPos = null;
+          pendingRevert = null;
+          openEditWhenReady = false;
+          inspectReady = false;
           inspectRaw = "";
           previewStack = [0];
           pageBusy = false;
@@ -1496,6 +1495,13 @@
         return;
       }
       if (msg.type === "error") {
+        if (pendingRevert) {
+          writeCellText(pendingRevert.rowIndex, pendingRevert.column, pendingRevert.display);
+          if (selected && selected.rowIndex === pendingRevert.rowIndex && selected.column === pendingRevert.column) {
+            selected.display = pendingRevert.display;
+          }
+          pendingRevert = null;
+        }
         pageBusy = false;
         if (els.loading) els.loading.hidden = true;
         queryOk = false;
