@@ -133,10 +133,12 @@ export type WebviewToHostMessage =
       search?: string;
       columns: string[];
       project?: boolean;
-      /** Current query when a chip is removed. The host rewrites that text and does not run it. */
+      /** Current query when a chip is added or removed. The host rewrites that text and does not run it. */
       keepDql?: string;
       dropFilter?: number;
       dropSearch?: boolean;
+      addFilter?: FilterCmp;
+      addSearch?: string;
     };
 
 export interface SerializedGrid {
@@ -177,6 +179,22 @@ function parseColumnList(raw: unknown): string[] | undefined | null {
     columns.push(name);
   }
   return columns;
+}
+
+function parseOneFilter(raw: unknown): FilterCmp | undefined | null {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null) return null;
+  const cmp = raw as Record<string, unknown>;
+  if (!validColumn(cmp.column)) return null;
+  if (typeof cmp.op !== "string" || !(FILTER_OPS as readonly string[]).includes(cmp.op)) return null;
+  if (cmp.value !== undefined && (typeof cmp.value !== "string" || cmp.value.length > MAX_CELL_LENGTH)) {
+    return null;
+  }
+  return {
+    column: cmp.column,
+    op: cmp.op,
+    ...(typeof cmp.value === "string" ? { value: cmp.value } : {}),
+  };
 }
 
 function parseFilters(
@@ -293,7 +311,22 @@ export function parseWebviewMessage(raw: unknown): WebviewToHostMessage | null {
       if (columns === undefined || columns === null) return null;
       if (typeof msg.keepDql === "string") {
         const keepDql = msg.keepDql.trim();
-        if (!keepDql || keepDql.length > MAX_DQL_LENGTH) return null;
+        if (keepDql.length > MAX_DQL_LENGTH) return null;
+        const addFilter = parseOneFilter(msg.addFilter);
+        if (addFilter === null) return null;
+        if (addFilter) {
+          if (msg.dropFilter !== undefined || msg.dropSearch !== undefined || msg.addSearch !== undefined) {
+            return null;
+          }
+          return { type: "applyFilter", columns, keepDql, addFilter };
+        }
+        if (typeof msg.addSearch === "string") {
+          const addSearch = msg.addSearch.trim();
+          if (!addSearch || addSearch.length > MAX_CELL_LENGTH) return null;
+          if (msg.dropFilter !== undefined || msg.dropSearch !== undefined) return null;
+          return { type: "applyFilter", columns, keepDql, addSearch };
+        }
+        if (!keepDql) return null;
         const dropSearch = msg.dropSearch === true;
         if (msg.dropSearch !== undefined && typeof msg.dropSearch !== "boolean") return null;
         if (dropSearch) {

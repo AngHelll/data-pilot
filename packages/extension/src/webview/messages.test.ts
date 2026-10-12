@@ -83,6 +83,41 @@ test("parseWebviewMessage accepts a column projection and rejects a bad flag", (
   );
 });
 
+test("parseWebviewMessage accepts a chip add and keeps an empty query", () => {
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "applyFilter",
+      columns: ["country", "status"],
+      keepDql: 'where country = "MX" | take 20',
+      addFilter: { column: "status", op: "=", value: "ACTIVE" },
+    }),
+    {
+      type: "applyFilter",
+      columns: ["country", "status"],
+      keepDql: 'where country = "MX" | take 20',
+      addFilter: { column: "status", op: "=", value: "ACTIVE" },
+    },
+  );
+  assert.deepEqual(
+    parseWebviewMessage({
+      type: "applyFilter",
+      columns: ["name"],
+      keepDql: "",
+      addSearch: "ada",
+    }),
+    { type: "applyFilter", columns: ["name"], keepDql: "", addSearch: "ada" },
+  );
+  assert.equal(
+    parseWebviewMessage({
+      type: "applyFilter",
+      columns: ["country"],
+      keepDql: 'where country = "MX"',
+      addFilter: { column: "status", op: "like", value: "A" },
+    }),
+    null,
+  );
+});
+
 test("parseWebviewMessage accepts a chip drop and a plan with columns", () => {
   assert.deepEqual(
     parseWebviewMessage({

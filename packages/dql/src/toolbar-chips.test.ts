@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dropToolbarChip, readToolbarChips } from "./toolbar-chips.js";
+import { addToolbarFilter, addToolbarSearch, dropToolbarChip, readToolbarChips } from "./toolbar-chips.js";
 
 const columns = ["id", "country", "balance", "name"];
 
@@ -70,4 +70,59 @@ test("dropToolbarChip removes one comparison and keeps the other stages", () => 
     dropToolbarChip('find "ada" in name case sensitive | where country = "MX"', columns, { search: true }),
     null,
   );
+});
+
+test("addToolbarFilter keeps select and take and refuses an or where", () => {
+  assert.equal(
+    addToolbarFilter('where country = "MX" | take 20', {
+      column: "status",
+      op: "=",
+      value: "ACTIVE",
+    }),
+    'where country = "MX" and status = "ACTIVE" | take 20',
+  );
+  assert.equal(
+    addToolbarFilter('select id, name | take 10', { column: "country", op: "=", value: "MX" }),
+    'where country = "MX" | select id, name | take 10',
+  );
+  assert.equal(
+    addToolbarFilter("", { column: "country", op: "=", value: "MX" }),
+    'where country = "MX"',
+  );
+  assert.equal(
+    addToolbarFilter("take 20", { column: "name", op: "is null", value: "" }),
+    "where name is null | take 20",
+  );
+  assert.equal(
+    addToolbarFilter('where country = "MX" or country = "US" | take 20', {
+      column: "status",
+      op: "=",
+      value: "ACTIVE",
+    }),
+    null,
+  );
+  assert.equal(
+    addToolbarFilter('where country = "MX" | take 20', { column: "status", op: "like", value: "A" }),
+    null,
+  );
+});
+
+test("addToolbarSearch keeps the where and refuses a find the toolbar cannot show", () => {
+  assert.equal(
+    addToolbarSearch('where country = "MX" | take 20', columns, "ada"),
+    'find "ada" in id, country, balance, name case insensitive | where country = "MX" | take 20',
+  );
+  assert.equal(
+    addToolbarSearch(
+      'find "ada" in id, country, balance, name | where country = "MX" | take 10',
+      columns,
+      "bob",
+    ),
+    'find "bob" in id, country, balance, name case insensitive | where country = "MX" | take 10',
+  );
+  assert.equal(
+    addToolbarSearch('find "ada" in name case sensitive | where country = "MX"', columns, "bob"),
+    null,
+  );
+  assert.equal(addToolbarSearch('where country = "MX"', [], "ada"), null);
 });

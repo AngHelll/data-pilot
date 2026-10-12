@@ -2,7 +2,7 @@
 
 **Fecha:** 7 de octubre de 2026  
 **Versión:** 0.1  
-**Estado:** dirección de diseño acordada. Las specs 1–18 y 22–25 de la fase 7 están verificadas. Las specs 19 y 21 están implementadas. El tag `v0.2.0` es el corte anterior de esta rama. La sección 2 es la captura anterior a ese workspace.
+**Estado:** dirección de diseño acordada. Las specs 1–18 y 22–25 de la fase 7 están verificadas. Las specs 19 y 21 están implementadas. Las specs 26–28 están verificadas. El tag `v0.2.0` es el corte anterior de esta rama. La sección 2 es la captura anterior a ese workspace.
 
 Complementa el phase map (`docs/ARCHITECTURE.md`). No sustituye sus contratos. No existe `docs/ROADMAP.md`. El turno de este diseño es la **fase 7**, que ya es la superficie actual del workspace. Las fases 5 y 6 son el cierre v0.1 y el empaquetado anteriores. La fase 8 (CLI/agentes) es una superficie aparte ya verificada.
 
@@ -48,10 +48,10 @@ Estructura de arriba hacia abajo:
 2. Pestañas internas: Data primero; Profile y Changes aparecen cuando sus capacidades estén implementadas. Compare/Validation solo al llegar a sus fases.
 3. Toolbar: filtros visuales, selector de columnas, búsqueda, export y menú de acciones secundarias.
 4. Tabla virtualizada que ocupa el espacio principal. Selección de celda/fila, navegación por teclado, columnas ajustables y scroll horizontal.
-5. Inspector plegable dentro del custom editor: columna, tipo, valor raw acotado y copiar. La edición se teclea en la celda.
+5. Inspector plegable dentro del custom editor: columna, tipo, valor raw acotado y copiar. La edición se teclea en la celda. Elegir una celda de Data abre la franja derecha. Hide la deja cerrada, y cerrada no reserva su ancho.
 6. Pie: alcance, filas devueltas, completitud/truncamiento y estado de ejecución.
 
-El inspector puede ocupar una franja derecha dentro del editor y colapsarse en ventanas estrechas. No se promete insertar arbitrariamente UI debajo de un editor de texto nativo.
+El inspector ocupa una franja derecha dentro del editor y se apila en ventanas estrechas. Plegado no reserva el ancho. No se promete insertar arbitrariamente UI debajo de un editor de texto nativo.
 
 Acciones contextuales:
 
@@ -179,6 +179,9 @@ La primera evaluación de Cursor decide cuándo migrar; este documento conserva 
 - La spec 23 está verificada: Jobs lista el preview y la query de esta ventana. Una query con nombre se lee ahí. Elegir una fila completada enfoca Result si ese resultado sigue. Cell inspector muestra la celda de Data y oculta la franja del editor mientras la vista está visible.
 - La spec 24 está verificada: Data y Result pintan la ventana visible. Next page y Previous page recorren el archivo con los techos de hoy. La cabecera dice el total solo cuando esa lectura llega al final.
 - La spec 25 está verificada: Enter edita el valor crudo en la celda y la tabla muestra el valor nuevo al momento. Changes guarda el último diff y no se abre solo. La franja queda para columna, tipo, valor crudo y copiar. Cell inspector salió del Activity Bar.
-- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 y 22–25 de arriba están verificadas. Las specs 19 y 21 están implementadas.
+- La spec 26 está verificada: la barra de Data en reposo muestra fichas, búsqueda y columnas. Añadir una ficha conserva el resto del pipeline. Ocultar una columna no escribe `select`. Apply no ejecuta.
+- La spec 27 está verificada: el encabezado cerrado es el nombre, Run y la línea de formato. Schema y Query siguen cerrados. El alto de más aparece cuando uno de esos detalles está abierto.
+- La spec 28 está verificada: elegir una celda de Data abre la franja derecha. Hide la deja cerrada y no reserva el ancho. Enter sigue en la celda.
+- Las fases 0–6 no abren este layout. Conservan el stage `where`, el panel Explorer como superficie v0.1, la edición en el host y un solo proceso hijo, para que la fase 7 los reubique. Ese párrafo es el antecedente. Las specs 1–18 y 22–25 de arriba están verificadas. Las specs 19 y 21 están implementadas. Las specs 26–28 están verificadas.
 
 Ningún ADR contradice el destino visual. ADR 0004 sigue exigiendo la misma validación de trust aunque el botón cambie de sitio. ADR 0001 admite un solo proceso hijo; no hace falta un segundo motor.

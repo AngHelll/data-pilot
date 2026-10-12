@@ -2,7 +2,14 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ColumnMeta, DataValue, Diagnostic, KeyDiffResult, QueryResult, TrustMode } from "@data-pilot/contracts";
 import { assertOpAllowed } from "@data-pilot/core";
-import { dropToolbarChip, parseDql, ParseError, readToolbarChips } from "@data-pilot/dql";
+import {
+  addToolbarFilter,
+  addToolbarSearch,
+  dropToolbarChip,
+  parseDql,
+  ParseError,
+  readToolbarChips,
+} from "@data-pilot/dql";
 import { datasetColorToken } from "../dataset-color";
 import { activityOutcome, activityText, columnPresentation, gridFooter, resultTabLabel } from "../editor-chrome";
 import { queryStagesPage } from "../row-window";
@@ -154,12 +161,12 @@ function editorPanelHtml(
     <div class="editor-title-row">
       <span id="dataset-color" class="dataset-color" hidden></span>
       <h1 id="title">Data Pilot</h1>
+      <p class="meta" id="editor-format"></p>
       <button id="run" type="button">Run query</button>
       <button id="open-query" class="quiet" type="button">Open query beside</button>
       <button id="cancel" class="quiet" type="button" hidden>Cancel</button>
     </div>
     <p class="hint" id="loading">Loading dataset…</p>
-    <p class="meta" id="editor-format"></p>
     <div id="trust"></div>
     <div class="row-actions" id="stale-row" hidden>
       <span class="warn" id="stale-banner"></span>
@@ -207,25 +214,29 @@ function editorPanelHtml(
     </div>
     <div id="panel-data" class="editor-panel" role="tabpanel">
   <section>
-    <div class="toolbar" id="grid-toolbar">
+      <div class="toolbar" id="grid-toolbar">
       <div id="filter-chips" class="filter-chips"></div>
-      <label class="toolbar-label" for="filter-column">Filter</label>
-      <select id="filter-column"><option value="">Column</option></select>
-      <select id="filter-op">
-        <option value="">Op</option>
-        <option value="=">=</option>
-        <option value="!=">!=</option>
-        <option value=">">&gt;</option>
-        <option value="<">&lt;</option>
-        <option value=">=">&gt;=</option>
-        <option value="<=">&lt;=</option>
-        <option value="is null">is null</option>
-        <option value="is not null">is not null</option>
-      </select>
-      <input id="filter-value" type="text" placeholder="Value" />
+      <button id="add-filter" type="button">Add filter</button>
+      <div id="filter-composer" hidden>
+        <label class="toolbar-label" for="filter-column">Filter</label>
+        <select id="filter-column"><option value="">Column</option></select>
+        <select id="filter-op">
+          <option value="">Op</option>
+          <option value="=">=</option>
+          <option value="!=">!=</option>
+          <option value=">">&gt;</option>
+          <option value="<">&lt;</option>
+          <option value=">=">&gt;=</option>
+          <option value="<=">&lt;=</option>
+          <option value="is null">is null</option>
+          <option value="is not null">is not null</option>
+        </select>
+        <input id="filter-value" type="text" placeholder="Value" />
+        <button id="apply-filter" type="button">Apply filter</button>
+        <button id="cancel-filter" class="quiet" type="button">Cancel</button>
+      </div>
       <label class="toolbar-label" for="filter-search">Search</label>
-      <input id="filter-search" type="text" placeholder="Search" title="Find in visible columns. This does not run the query." />
-      <button id="apply-filter" type="button">Apply filter</button>
+      <input id="filter-search" type="text" placeholder="Search" title="Writes a find for the grid columns. This does not run the query." />
       <details id="column-picker">
         <summary>Select columns</summary>
         <div id="column-picker-body"></div>
@@ -1237,6 +1248,20 @@ class DatasetViewSession {
     }
 
     if (msg.type === "applyFilter") {
+      if (msg.addFilter) {
+        const next = addToolbarFilter(msg.keepDql ?? "", {
+          column: msg.addFilter.column,
+          op: msg.addFilter.op,
+          value: msg.addFilter.value ?? "",
+        });
+        this.postQueryLoaded(next ?? msg.keepDql ?? "", msg.columns);
+        return;
+      }
+      if (msg.addSearch !== undefined) {
+        const next = addToolbarSearch(msg.keepDql ?? "", msg.columns, msg.addSearch);
+        this.postQueryLoaded(next ?? msg.keepDql ?? "", msg.columns);
+        return;
+      }
       if (msg.keepDql) {
         const next = msg.dropSearch
           ? dropToolbarChip(msg.keepDql, msg.columns, { search: true })

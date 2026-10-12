@@ -28,6 +28,7 @@
     const ROW_HEIGHT_PX = 28;
     const ROW_OVERSCAN = 8;
     let previewStack = [0];
+    let inspectorHoldClosed = false;
     let resultStack = [0];
     let pageBusy = false;
 
@@ -451,7 +452,7 @@
         vscode.postMessage({
           type: "planDql",
           dql,
-          columns: lastGrid ? visibleNames(lastGrid.columns) : [],
+          columns: queryColumns(),
         });
       }, 450);
     }
@@ -546,6 +547,11 @@
       const onData = editorTab === "data";
       const located = !!(selectedPos && selectedPos.sourceRow != null);
       inspector.hidden = !onData || !located;
+      if (onData && located && !inspectorHoldClosed) {
+        document.body.classList.remove("inspector-collapsed");
+        const toggle = document.getElementById("inspector-toggle");
+        if (toggle) text(toggle, "Hide inspector");
+      }
     }
 
     function syncEditorFooter() {
@@ -1069,8 +1075,12 @@
       renderFilterChips();
     }
 
+    function queryColumns() {
+      return lastGrid && lastGrid.columns ? lastGrid.columns.filter((name) => name) : [];
+    }
+
     function chipColumns() {
-      return lastGrid ? visibleNames(lastGrid.columns) : [];
+      return queryColumns();
     }
 
     function renderFilterChips() {
@@ -1111,55 +1121,60 @@
       }
     }
 
-    function postApplied(project) {
-      const columns = lastGrid ? visibleNames(lastGrid.columns) : [];
-      if (project && columns.length === 0) return;
-      if (!project && comparisons.length === 0 && !appliedSearch) {
-        vscode.postMessage({ type: "applyFilter", columns, filters: [] });
-        return;
+    function closeComposer() {
+      const composer = document.getElementById("filter-composer");
+      const add = document.getElementById("add-filter");
+      if (composer) composer.hidden = true;
+      if (add) add.hidden = false;
+      const columnEl = document.getElementById("filter-column");
+      if (columnEl) columnEl.value = "";
+      if (filterOp) filterOp.value = "";
+      if (filterValue) {
+        filterValue.value = "";
+        filterValue.disabled = false;
       }
-      const message = {
-        type: "applyFilter",
-        columns,
-        filters: comparisons.map((cmp) => ({ column: cmp.column, op: cmp.op, value: cmp.value })),
-      };
-      if (appliedSearch) message.search = appliedSearch;
-      if (project) message.project = true;
-      vscode.postMessage(message);
     }
 
-    function postFilter(project) {
+    function postAddFilter() {
       const columnEl = document.getElementById("filter-column");
       const column = columnEl ? columnEl.value : "";
       const op = filterOp ? filterOp.value : "";
       const value = filterValue ? filterValue.value : "";
-      const searchEl = document.getElementById("filter-search");
-      const search = searchEl ? searchEl.value.trim() : "";
-      if (project) {
-        postApplied(true);
-        return;
-      }
-      if (!(column && op) && !search) return;
-      if (column && op) comparisons.push({ column, op, value });
-      if (search) appliedSearch = search;
-      if (columnEl) columnEl.value = "";
-      if (filterOp) filterOp.value = "";
-      if (filterValue) filterValue.value = "";
-      if (searchEl) searchEl.value = "";
-      renderFilterChips();
-      postApplied(false);
+      if (!column || !op) return;
+      vscode.postMessage({
+        type: "applyFilter",
+        columns: queryColumns(),
+        keepDql: els.dql.value,
+        addFilter: { column, op, value },
+      });
+      closeComposer();
     }
-    if (applyFilter) applyFilter.addEventListener("click", () => postFilter(false));
-    const columnPicker = document.getElementById("column-picker");
-    if (columnPicker) {
-      let columnSnapshot = null;
-      columnPicker.addEventListener("toggle", () => {
-        if (columnPicker.open) {
-          columnSnapshot = [...hiddenColumns].sort().join("\0");
-          return;
-        }
-        const now = [...hiddenColumns].sort().join("\0");
-        if (columnSnapshot !== null && now !== columnSnapshot) postFilter(true);
+
+    const addFilter = document.getElementById("add-filter");
+    const cancelFilter = document.getElementById("cancel-filter");
+    if (addFilter) {
+      addFilter.addEventListener("click", () => {
+        const composer = document.getElementById("filter-composer");
+        if (composer) composer.hidden = false;
+        addFilter.hidden = true;
+      });
+    }
+    if (cancelFilter) cancelFilter.addEventListener("click", () => closeComposer());
+    if (applyFilter) applyFilter.addEventListener("click", () => postAddFilter());
+    const searchEl = document.getElementById("filter-search");
+    if (searchEl) {
+      searchEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        const search = searchEl.value.trim();
+        if (!search) return;
+        vscode.postMessage({
+          type: "applyFilter",
+          columns: queryColumns(),
+          keepDql: els.dql.value,
+          addSearch: search,
+        });
+        searchEl.value = "";
       });
     }
 
@@ -1180,7 +1195,7 @@
         vscode.postMessage({
           type: "planDql",
           dql,
-          columns: lastGrid ? visibleNames(lastGrid.columns) : [],
+          columns: queryColumns(),
         });
       });
     }
@@ -1228,6 +1243,7 @@
     if (inspectorToggle) {
       inspectorToggle.addEventListener("click", () => {
         const collapsed = document.body.classList.toggle("inspector-collapsed");
+        inspectorHoldClosed = collapsed;
         text(inspectorToggle, collapsed ? "Show inspector" : "Hide inspector");
       });
     }

@@ -1,4 +1,4 @@
-import type { DqlQuery, Expr, Predicate, Span } from "./ast.js";
+import type { DqlQuery, Expr, Predicate, Span, Stage } from "./ast.js";
 import { formatDql } from "./format.js";
 import { parseDql, ParseError } from "./parse.js";
 
@@ -56,6 +56,119 @@ export function dropToolbarChip(
   if (parts.length === 0) query.stages.splice(whereAt, 1);
   else query.stages[whereAt] = { kind: "where", predicate: joinAnd(parts), span: where.span };
   return formatDql(query);
+}
+
+const CMP_OPS = ["=", "!=", "<", "<=", ">", ">="] as const;
+const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+/**
+ * And one toolbar comparison onto the query and keep every other stage.
+ * Returns null when the where is not a toolbar conjunction, or the comparison is not one.
+ * Does not run the query.
+ */
+export function addToolbarFilter(source: string, add: ToolbarCmp): string | null {
+  const query = parsed(source);
+  if (query === null) return null;
+  const predicate = comparisonPredicate(add);
+  if (!predicate) return null;
+  if (query === "") return formatQuery([{ kind: "where", predicate, span: ZERO }]);
+  if (whereIndex(query) === null && query.stages.some((stage) => stage.kind === "where")) return null;
+  const whereAt = whereIndex(query);
+  if (whereAt === null) {
+    insertWhere(query, { kind: "where", predicate, span: ZERO });
+    return formatDql(query);
+  }
+  const where = query.stages[whereAt];
+  if (!where || where.kind !== "where") return null;
+  const parts = conjunction(where.predicate);
+  if (!parts) return null;
+  parts.push(predicate);
+  query.stages[whereAt] = { kind: "where", predicate: joinAnd(parts), span: where.span };
+  return formatDql(query);
+}
+
+/**
+ * Insert or replace the toolbar find and keep every other stage.
+ * Returns null when a find is present and it is not the toolbar find for these columns.
+ * Does not run the query.
+ */
+export function addToolbarSearch(
+  source: string,
+  columns: readonly string[],
+  needle: string,
+): string | null {
+  const text = needle.trim();
+  const names = columns.map((name) => name.trim()).filter((name) => name.length > 0);
+  if (!text || names.length === 0) return null;
+  const query = parsed(source);
+  if (query === null) return null;
+  const findStage: Stage = {
+    kind: "find",
+    needle: text,
+    columns: names,
+    caseMode: "insensitive",
+    span: ZERO,
+  };
+  if (query === "") return formatQuery([findStage]);
+  if (query.stages.some((stage) => stage.kind === "find")) {
+    const found = toolbarFind(query, names);
+    if (!found) return null;
+    query.stages[found.index] = findStage;
+    return formatDql(query);
+  }
+  query.stages.unshift(findStage);
+  return formatDql(query);
+}
+
+function formatQuery(stages: Stage[]): string {
+  return formatDql({ version: "0.1", source: "", stages });
+}
+
+function comparisonPredicate(cmp: ToolbarCmp): Predicate | null {
+  const column = cmp.column.trim();
+  const op = cmp.op.trim();
+  if (!column) return null;
+  if (op === "is null" || op === "is not null") {
+    return {
+      kind: "is",
+      expr: { kind: "column", name: column, span: ZERO },
+      test: "null",
+      negated: op === "is not null",
+      span: ZERO,
+    };
+  }
+  if (!(CMP_OPS as readonly string[]).includes(op)) return null;
+  return {
+    kind: "cmp",
+    op: op as (typeof CMP_OPS)[number],
+    left: { kind: "column", name: column, span: ZERO },
+    right: literalFromToolbar(cmp.value),
+    span: ZERO,
+  };
+}
+
+function literalFromToolbar(value: string): Expr {
+  if (value === "true" || value === "false") {
+    return { kind: "boolean", value: value === "true", span: ZERO };
+  }
+  if (CANONICAL_NUMBER.test(value)) {
+    return { kind: value.includes(".") ? "decimal" : "integer", value, span: ZERO };
+  }
+  return { kind: "string", value, span: ZERO };
+}
+
+function insertWhere(query: DqlQuery, stage: Stage): void {
+  const at = query.stages.findIndex(
+    (item) =>
+      item.kind === "select" ||
+      item.kind === "take" ||
+      item.kind === "count" ||
+      item.kind === "expectCount" ||
+      item.kind === "expectUnique" ||
+      item.kind === "whenExpect",
+  );
+  if (at < 0) query.stages.push(stage);
+  else query.stages.splice(at, 0, stage);
 }
 
 function parsed(source: string): DqlQuery | "" | null {

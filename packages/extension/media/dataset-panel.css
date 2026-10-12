@@ -91,6 +91,7 @@ body[data-layout="editor"] #grid { width: max-content; min-width: 100%; }
 body[data-layout="editor"] #grid th { min-width: 4.5rem; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#filter-composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .filter-chip { border-radius: 10px; padding: 2px 8px; }
 body[data-layout="editor"] .result-toolbar { width: 100%; }
 body[data-layout="editor"] #export-query { margin-left: auto; }
@@ -136,9 +137,11 @@ body[data-layout="editor"].inspector-collapsed #inspector-body { display: none; 
 body[data-layout="editor"] .editor-title-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
-body[data-layout="editor"] .editor-title-row h1 { flex: 1; margin: 0; }
+body[data-layout="editor"] .editor-title-row h1 { flex: 0 1 auto; margin: 0; }
+body[data-layout="editor"] .editor-title-row #editor-format { flex: 1 1 auto; margin: 0; min-width: 8rem; }
 body[data-layout="editor"] .editor-head {
   border-left: 3px solid var(--dataset-color, transparent);
   padding-left: 8px;
@@ -263,8 +266,10 @@ body[data-layout="editor"] #inspector .cell-edit { width: 100%; box-sizing: bord
 }
 body[data-layout="editor"] .editor-chrome {
   flex: 0 0 auto;
-  max-height: 38%;
   overflow: auto;
+}
+body[data-layout="editor"] .editor-chrome:has(details[open]) {
+  max-height: 38%;
 }
 body[data-layout="editor"] .editor-tabs {
   flex: 1 1 auto;
@@ -309,6 +314,26 @@ body[data-layout="editor"] #inspector {
   border-left: 1px solid var(--vscode-panel-border);
   padding: 8px 12px 12px;
   margin: 0;
+}
+body[data-layout="editor"].inspector-collapsed #inspector {
+  flex: 0 0 auto;
+  width: auto;
+  max-height: none;
+  border-left: none;
+}
+@media (max-width: 720px) {
+  body[data-layout="editor"] #inspector {
+    flex: 0 1 auto;
+    width: auto;
+    max-height: 34%;
+    border-left: none;
+    border-top: 1px solid var(--vscode-panel-border);
+  }
+  body[data-layout="editor"].inspector-collapsed #inspector {
+    flex: 0 0 auto;
+    max-height: none;
+    border-top: none;
+  }
 }
 body[data-layout="editor"] .editor-footer {
   flex: 0 0 auto;
