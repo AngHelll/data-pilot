@@ -343,12 +343,30 @@ body[data-layout="editor"] .toolbar select {
   min-width: 0;
   max-width: 100%;
 }
-.cell-type-string { color: var(--vscode-charts-blue, #3794ff); }
-.cell-type-integer { color: var(--vscode-charts-green, #89d185); }
-.cell-type-decimal { color: var(--vscode-charts-orange, #d18616); }
-.cell-type-boolean { color: var(--vscode-charts-purple, #b180d7); }
-.cell-type-date { color: var(--vscode-charts-yellow, #cca700); }
-.cell-type-datetime { color: var(--vscode-charts-red, #f14c4c); }
+.cell-type-string {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-blue) 62%, var(--vscode-editor-foreground));
+}
+.cell-type-integer {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-green) 62%, var(--vscode-editor-foreground));
+}
+.cell-type-decimal {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-orange) 62%, var(--vscode-editor-foreground));
+}
+.cell-type-boolean {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-purple) 62%, var(--vscode-editor-foreground));
+}
+.cell-type-date {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-yellow) 62%, var(--vscode-editor-foreground));
+}
+.cell-type-datetime {
+  color: var(--vscode-editor-foreground);
+  color: color-mix(in srgb, var(--vscode-charts-red) 62%, var(--vscode-editor-foreground));
+}
 .cell-null,
 .cell-missing { opacity: 0.55; font-style: italic; }
 .cell-editor {

@@ -245,6 +245,45 @@
       });
     }
 
+    function typeLabel(token) {
+      if (!token) return "";
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    }
+
+    function typeClass(token) {
+      if (
+        token === "string" || token === "integer" || token === "decimal" ||
+        token === "boolean" || token === "date" || token === "datetime"
+      ) {
+        return "cell-type-" + token;
+      }
+      return "";
+    }
+
+    function typeCell(token) {
+      const td = document.createElement("td");
+      text(td, typeLabel(token));
+      const tone = typeClass(token);
+      if (tone) td.className = tone;
+      return td;
+    }
+
+    function tokenFor(list, name, index) {
+      if (!list) return "";
+      const at = list[index];
+      if (at && at.name === name) return at.inferredType || "";
+      const found = list.find((col) => col && col.name === name);
+      return found ? found.inferredType || "" : "";
+    }
+
+    function headerLabel(name, token) {
+      const label = document.createElement("span");
+      text(label, token ? name + " (" + typeLabel(token) + ")" : name);
+      const tone = typeClass(token);
+      if (tone) label.className = tone;
+      return label;
+    }
+
     function renderDescribe(desc) {
       const mtime = new Date(desc.mtimeMs).toLocaleString();
       text(
@@ -256,14 +295,19 @@
       els.schemaBody.replaceChildren();
       for (const col of desc.columns) {
         const tr = document.createElement("tr");
-        for (const cell of [
+        const cells = [
           col.name,
-          col.inferredType,
+          null,
           col.nullCountSample != null ? String(col.nullCountSample) : "—",
           col.missingCountSample != null ? String(col.missingCountSample) : "—",
-        ]) {
+        ];
+        for (let i = 0; i < cells.length; i++) {
+          if (i === 1) {
+            tr.appendChild(typeCell(col.inferredType));
+            continue;
+          }
           const td = document.createElement("td");
-          text(td, cell);
+          text(td, cells[i]);
           tr.appendChild(td);
         }
         els.schemaBody.appendChild(tr);
@@ -280,7 +324,7 @@
         const tr = document.createElement("tr");
         const cells = [
           col.name,
-          col.inferredType,
+          null,
           col.sampleSize != null ? String(col.sampleSize) : "",
           col.nullCountSample != null ? String(col.nullCountSample) : "",
           col.missingCountSample != null ? String(col.missingCountSample) : "",
@@ -288,9 +332,13 @@
           col.minSample ?? "",
           col.maxSample ?? "",
         ];
-        for (const cell of cells) {
+        for (let i = 0; i < cells.length; i++) {
+          if (i === 1) {
+            tr.appendChild(typeCell(col.inferredType));
+            continue;
+          }
           const td = document.createElement("td");
-          text(td, cell);
+          text(td, cells[i]);
           tr.appendChild(td);
         }
         els.profileBody.appendChild(tr);
@@ -608,9 +656,10 @@
       const thIdx = document.createElement("th");
       text(thIdx, "#");
       hr.appendChild(thIdx);
-      for (const col of grid.columns) {
+      for (let ci = 0; ci < grid.columns.length; ci++) {
+        const col = grid.columns[ci];
         const th = document.createElement("th");
-        text(th, col);
+        th.appendChild(headerLabel(col, tokenFor(grid.columnTypes, col, ci)));
         hr.appendChild(th);
       }
       thead.appendChild(hr);
@@ -676,10 +725,7 @@
         const col = grid.columns[ci];
         if (!shown.has(col)) continue;
         const th = document.createElement("th");
-        const inferred = columnTypes[ci] && columnTypes[ci].inferredType;
-        const label = document.createElement("span");
-        text(label, inferred ? col + " (" + inferred + ")" : col);
-        th.appendChild(label);
+        th.appendChild(headerLabel(col, tokenFor(columnTypes, col, ci)));
         const grip = document.createElement("span");
         grip.className = "col-resize";
         grip.addEventListener("mousedown", (event) => {
@@ -774,21 +820,15 @@
       if (alignEnd) td.classList.add("cell-end");
       if (display === "null") td.classList.add("cell-null");
       else if (display === "·") td.classList.add("cell-missing");
-      else {
-        const kind = inferredOf(name);
-        if (
-          kind === "string" || kind === "integer" || kind === "decimal" ||
-          kind === "boolean" || kind === "date" || kind === "datetime"
-        ) {
-          td.classList.add("cell-type-" + kind);
-        }
-        if (pill) {
-          const badge = document.createElement("span");
-          badge.className = "badge";
-          text(badge, display);
-          td.replaceChildren(badge);
-          return;
-        }
+      else if (pill) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        text(badge, display);
+        td.replaceChildren(badge);
+        return;
+      } else {
+        const tone = typeClass(inferredOf(name));
+        if (tone) td.classList.add(tone);
       }
       text(td, display);
     }
@@ -904,7 +944,7 @@
       const rawEl = document.getElementById("inspect-raw");
       if (colEl) text(colEl, column || "—");
       if (typeEl) {
-        const label = !type || pending ? "…" : type.charAt(0).toUpperCase() + type.slice(1);
+        const label = !type || pending ? "…" : typeLabel(type);
         text(typeEl, label);
       }
       if (rawEl) text(rawEl, pending ? "…" : String(raw));

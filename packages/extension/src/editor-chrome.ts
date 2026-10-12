@@ -77,6 +77,12 @@ export function gridFooter(input: {
   return `${status}\nShowing 1–${n} of ${n}`;
 }
 
+/** Visible type name. The engine token stays lowercase. */
+export function typeLabel(inferredType: string): string {
+  if (!inferredType) return "";
+  return inferredType.charAt(0).toUpperCase() + inferredType.slice(1);
+}
+
 export function columnPresentation(input: {
   inferredType: string;
   distinctCountSample?: number;

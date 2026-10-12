@@ -5,6 +5,7 @@ import {
   columnPresentation,
   gridFooter,
   resultTabLabel,
+  typeLabel,
 } from "./editor-chrome.js";
 
 test("a named query titles the result tab", () => {
@@ -43,6 +44,14 @@ test("status text omits milliseconds that were not measured", () => {
   assert.equal(activityText("query", "complete", 84), "Query complete · 84 ms");
   assert.equal(activityText("query", "failed"), "Query failed");
   assert.equal(activityText("preview", "cut-short", undefined), "Preview cut short");
+});
+
+test("type labels capitalize the engine token once", () => {
+  assert.equal(typeLabel("decimal"), "Decimal");
+  assert.equal(typeLabel("datetime"), "Datetime");
+  assert.equal(typeLabel("mixed"), "Mixed");
+  assert.equal(typeLabel("unknown"), "Unknown");
+  assert.equal(typeLabel(""), "");
 });
 
 test("pills are for booleans and short low-cardinality strings", () => {
